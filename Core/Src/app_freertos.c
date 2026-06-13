@@ -115,7 +115,7 @@ void StartDefaultTask(void *argument)
     printf("Hello World from FreeRTOS Task!\r\n");
     
     // Toggle the Green LED using BSP (BSP handles are globally mapped)
-    BSP_LED_Toggle(LED_GREEN);
+    BSP_LED_Toggle(LED_BLUE);
     
     // ALWAYS use osDelay inside FreeRTOS tasks to let other threads run
     osDelay(1000); 
