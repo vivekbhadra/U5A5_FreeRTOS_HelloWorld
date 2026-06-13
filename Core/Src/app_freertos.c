@@ -20,6 +20,7 @@
 /* Includes ------------------------------------------------------------------*/
 #include "app_freertos.h"
 #include "flash_driver.h"
+#include "fdcan_updater.h"
   
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */

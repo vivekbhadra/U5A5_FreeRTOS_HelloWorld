@@ -1,0 +1,95 @@
+/* Core/Src/fdcan_updater.c */
+#include "fdcan_updater.h"
+#include <stdio.h>
+
+/* Access the CubeMX generated FDCAN handle */
+extern FDCAN_HandleTypeDef hfdcan1;
+
+/**
+ * @brief Configures standard FDCAN filters to routing update range into FIFO 0, 
+ *        and starts the CAN controller.
+ */
+HAL_StatusTypeDef App_FDCAN_Configure_Filters(void) {
+    FDCAN_FilterTypeDef sFilterConfig;
+
+    printf("[FDCAN] Configuring hardware message filters...\r\n");
+
+    /* 1. Setup range filter to accept Standard IDs 0x200 to 0x205 */
+    sFilterConfig.IdType = FDCAN_STANDARD_ID;
+    sFilterConfig.FilterIndex = 0;
+    sFilterConfig.FilterType = FDCAN_FILTER_RANGE;
+    sFilterConfig.FilterConfig = FDCAN_FILTER_TO_RXFIFO0;
+    sFilterConfig.FilterID1 = CAN_ID_FW_INIT;      /* 0x200 */
+    sFilterConfig.FilterID2 = CAN_ID_FW_END;       /* 0x205 */
+
+    if (HAL_FDCAN_ConfigFilter(&hfdcan1, &sFilterConfig) != HAL_OK) {
+        printf("[FDCAN] ERROR: Failed to configure range filters!\r\n");
+        return HAL_ERROR;
+    }
+
+    /* 2. Configure global filters to reject anything outside our update ID ranges */
+    if (HAL_FDCAN_ConfigGlobalFilter(&hfdcan1, 
+                                     FDCAN_REJECT, 
+                                     FDCAN_REJECT, 
+                                     FDCAN_FILTER_ON_CONFRX, 
+                                     FDCAN_REJECT) != HAL_OK) {
+        printf("[FDCAN] ERROR: Failed to configure Global rejection filters!\r\n");
+        return HAL_ERROR;
+    }
+
+    /* 3. Start the FDCAN controller */
+    if (HAL_FDCAN_Start(&hfdcan1) != HAL_OK) {
+        printf("[FDCAN] ERROR: FDCAN failed to transition to START state!\r\n");
+        return HAL_ERROR;
+    }
+
+    /* 4. Enable FIFO 0 Interrupt (So we can queue messages inside our ISR callback) */
+    if (HAL_FDCAN_ActivateNotification(&hfdcan1, FDCAN_IT_RX_FIFO0_NEW_MESSAGE, 0) != HAL_OK) {
+        printf("[FDCAN] ERROR: Failed to activate FIFO0 RX interrupt!\r\n");
+        return HAL_ERROR;
+    }
+
+    printf("[FDCAN] Filters configured. Hardware is ACTIVE and listening.\r\n");
+    return HAL_OK;
+}
+
+/**
+ * @brief Transmits a message over FDCAN with correct CAN FD formatting
+ */
+HAL_StatusTypeDef App_FDCAN_Send_Message(uint32_t can_id, const uint8_t *payload, uint16_t size) {
+    FDCAN_TxHeaderTypeDef TxHeader;
+
+    TxHeader.Identifier = can_id;
+    TxHeader.IdType = FDCAN_STANDARD_ID;
+    TxHeader.TxFrameType = FDCAN_DATA_FRAME;
+    TxHeader.FDFormat = FDCAN_FD_CAN; // Select CAN FD Mode
+    TxHeader.BitRateSwitch = FDCAN_BRS_ON; // Enable Baud rate acceleration
+    TxHeader.TxEventFifoControl = FDCAN_NO_TX_EVENTS;
+    TxHeader.MessageMarker = 0;
+
+    /* Map length strictly to HAL FD DLC codes */
+    if (size <= 8) {
+        TxHeader.DataLength = size;
+    } else if (size <= 12) {
+        TxHeader.DataLength = FDCAN_DLC_BYTES_12;
+    } else if (size <= 16) {
+        TxHeader.DataLength = FDCAN_DLC_BYTES_16;
+    } else if (size <= 20) {
+        TxHeader.DataLength = FDCAN_DLC_BYTES_20;
+    } else if (size <= 24) {
+        TxHeader.DataLength = FDCAN_DLC_BYTES_24;
+    } else if (size <= 32) {
+        TxHeader.DataLength = FDCAN_DLC_BYTES_32;
+    } else if (size <= 48) {
+        TxHeader.DataLength = FDCAN_DLC_BYTES_48;
+    } else {
+        TxHeader.DataLength = FDCAN_DLC_BYTES_64;
+    }
+
+    if (HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan1, &TxHeader, (uint8_t *)payload) != HAL_OK) {
+        printf("[FDCAN] ERROR: Failed to queue TX message ID 0x%03lX!\r\n", (unsigned long)can_id);
+        return HAL_ERROR;
+    }
+
+    return HAL_OK;
+}
