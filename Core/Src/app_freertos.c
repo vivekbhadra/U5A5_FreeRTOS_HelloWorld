@@ -21,6 +21,7 @@
 #include "app_freertos.h"
 #include "flash_driver.h"
 #include "fdcan_updater.h"
+#include "queue.h"
   
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -43,9 +44,25 @@
 /* USER CODE BEGIN PM */
   
 /* USER CODE END PM */
+
+/* Extern the hardware CRC handle configured in main.c */
+extern CRC_HandleTypeDef hcrc;
+extern QueueHandle_t CanRxQueue;
+/* Slave State Trackers */
+typedef enum {
+    UPDATER_STATE_IDLE,
+    UPDATER_STATE_RECEIVING
+} UpdaterState_t;
+
   
 /* Private variables ---------------------------------------------------------*/
 /* USER CODE BEGIN Variables */
+extern FDCAN_HandleTypeDef hfdcan1;
+extern CRC_HandleTypeDef hcrc;
+QueueHandle_t CanRxQueue = NULL;     
+osThreadId_t  updaterTaskHandle = NULL;   
+osThreadId_t  masterSimTaskHandle = NULL; 
+QueueHandle_t CanRxQueue = NULL;
 // Mutex to protect printf from concurrent write interleaving
 osMutexId_t printMutexHandle;
 const osMutexAttr_t printMutex_attributes = {
@@ -100,40 +117,52 @@ void StartRedTask(void *argument);
   */
 void MX_FREERTOS_Init(void) {
   /* USER CODE BEGIN Init */
-  
   /* USER CODE END Init */
-  
   /* USER CODE BEGIN RTOS_MUTEX */
   // Create our Print Mutex to prevent garbled console text
   printMutexHandle = osMutexNew(&printMutex_attributes);
   /* USER CODE END RTOS_MUTEX */
-  
   /* USER CODE BEGIN RTOS_SEMAPHORES */
   /* add semaphores, ... */
   /* USER CODE END RTOS_SEMAPHORES */
-  
   /* USER CODE BEGIN RTOS_TIMERS */
   /* start timers, add new ones, ... */
   /* USER CODE END RTOS_TIMERS */
-  
   /* USER CODE BEGIN RTOS_QUEUES */
   /* add queues, ... */
+  CanRxQueue = xQueueCreate(10, sizeof(FwCanRxQueueMsg_t));
+  if (CanRxQueue == NULL) {
+      printf("[SYSTEM] ERROR: Failed to create FDCAN RX Queue!\r\n");
+  } else {
+      printf("[SYSTEM] FDCAN RX Queue initialized successfully.\r\n");
+  }
   /* USER CODE END RTOS_QUEUES */
-
+  
   /* creation of defaultTask */
   defaultTaskHandle = osThreadNew(StartDefaultTask, NULL, &defaultTask_attributes);
-  
   /* USER CODE BEGIN RTOS_THREADS */
   // Create the Green, Blue, and Red Task threads
   greenTaskHandle = osThreadNew(StartGreenTask, NULL, &greenTask_attributes);
   blueTaskHandle = osThreadNew(StartBlueTask, NULL, &blueTask_attributes);
   redTaskHandle = osThreadNew(StartRedTask, NULL, &redTask_attributes);
+
+  /* Incremental Addition: Create FDCAN Loopback Update Slave & Master Tasks */
+  static const osThreadAttr_t updaterTask_attributes = {
+    .name = "FwUpdaterTask",
+    .stack_size = 2048,
+    .priority = (osPriority_t) osPriorityAboveNormal,
+  };
+  static const osThreadAttr_t masterSimTask_attributes = {
+    .name = "FwMasterSimTask",
+    .stack_size = 1024,
+    .priority = (osPriority_t) osPriorityNormal,
+  };
+  updaterTaskHandle = osThreadNew(FirmwareUpdater_Task, NULL, &updaterTask_attributes);
+  masterSimTaskHandle = osThreadNew(FwSimMaster_Task, NULL, &masterSimTask_attributes);
   /* USER CODE END RTOS_THREADS */
-  
   /* USER CODE BEGIN RTOS_EVENTS */
   /* add events, ... */
   /* USER CODE END RTOS_EVENTS */
-  
 }
 
 /* USER CODE BEGIN Header_StartDefaultTask */
@@ -266,4 +295,215 @@ void StartRedTask(void *argument)
   }
 }
 
+void FirmwareUpdater_Task(void *argument) {
+    FwCanRxQueueMsg_t rxMsg;
+    UpdaterState_t state = UPDATER_STATE_IDLE;
+    
+    /* Session trackers */
+    uint16_t active_update_id = 0;
+    uint32_t total_size = 0;
+    uint32_t expected_segment = 0;
+    uint32_t total_bytes_written = 0;
+    
+    printf("[SLAVE] Production Updater Task Started.\r\n");
+
+    for (;;) {
+        /* Block and wait indefinitely for incoming looped CAN FD frames */
+        if (xQueueReceive(CanRxQueue, &rxMsg, portMAX_DELAY) == pdPASS) {
+            
+            /* ---- 1. Handle Update Init ---- */
+            if (rxMsg.can_id == CAN_ID_FW_INIT && state == UPDATER_STATE_IDLE) {
+                FirmwareUpdateInit_t *init = (FirmwareUpdateInit_t *)rxMsg.payload;
+                
+                /* Target validation (Board ID 0xAA) */
+                if (init->recipient_id == 0xAA) {
+                    printf("[SLAVE] Init Recv: UpdateID=%u, Size=%lu bytes\r\n", 
+                           init->update_id, (unsigned long)init->total_size);
+                    
+                    /* Erase DFU Partition completely before receiving segments */
+                    if (App_Flash_Erase(ADDR_FLASH_DFU, DFU_PARTITION_SIZE) == HAL_OK) {
+                        /* Reset STM32 hardware CRC peripheral accumulator */
+                        __HAL_CRC_DR_RESET(&hcrc);
+                        
+                        active_update_id = init->update_id;
+                        total_size = init->total_size;
+                        expected_segment = 0;
+                        total_bytes_written = 0;
+                        state = UPDATER_STATE_RECEIVING;
+
+                        /* Request first chunk (Segment index 0) */
+                        FirmwareUpdateSegmentRequest_t req = { .update_id = active_update_id, .segment_id = 0 };
+                        App_FDCAN_Send_Message(CAN_ID_FW_SEG_REQ, (uint8_t *)&req, sizeof(req));
+                    } else {
+                        FirmwareUpdateEnd_t end = { .update_id = init->update_id, .reject_reason = REJECT_NOR_FLASH_ERROR_OTHER };
+                        App_FDCAN_Send_Message(CAN_ID_FW_END, (uint8_t *)&end, sizeof(end));
+                    }
+                }
+            }
+            
+            /* ---- 2. Handle Segment Transmission ---- */
+            else if (rxMsg.can_id == CAN_ID_FW_SEGMENT && state == UPDATER_STATE_RECEIVING) {
+                FirmwareUpdateSegment_t *seg = (FirmwareUpdateSegment_t *)rxMsg.payload;
+
+                if (seg->update_id != active_update_id || seg->segment_id != expected_segment) {
+                    printf("[SLAVE] ERROR: Protocol violation! Expected seg %lu, got %lu\r\n", 
+                           (unsigned long)expected_segment, (unsigned long)seg->segment_id);
+                    state = UPDATER_STATE_IDLE;
+                    FirmwareUpdateEnd_t end = { .update_id = active_update_id, .reject_reason = REJECT_PROTOCOL_ERROR };
+                    App_FDCAN_Send_Message(CAN_ID_FW_END, (uint8_t *)&end, sizeof(end));
+                    continue;
+                }
+
+                /* Construct 16-byte aligned array for quad-word flash writer */
+                uint8_t write_block[32] = {0};
+                memcpy(write_block, seg->segment_data, seg->data_length);
+                
+                uint32_t offset = seg->segment_id * 32;
+                if (App_Flash_Write(ADDR_FLASH_DFU + offset, write_block, 32) == HAL_OK) {
+                    
+                    /* Accumulate CRC in hardware using 32-bit words */
+                    HAL_CRC_Accumulate(&hcrc, (uint32_t *)write_block, 8);
+                    
+                    expected_segment++;
+                    total_bytes_written += seg->data_length;
+                    
+                    if (total_bytes_written == total_size) {
+                        /* Request final checksum validation from master */
+                        FirmwareUpdateChecksumRequest_t chk_req = { .update_id = active_update_id };
+                        App_FDCAN_Send_Message(CAN_ID_FW_CHKSUM_REQ, (uint8_t *)&chk_req, sizeof(chk_req));
+                    } else {
+                        /* Request next segment */
+                        FirmwareUpdateSegmentRequest_t req = { .update_id = active_update_id, .segment_id = expected_segment };
+                        App_FDCAN_Send_Message(CAN_ID_FW_SEG_REQ, (uint8_t *)&req, sizeof(req));
+                    }
+                } else {
+                    state = UPDATER_STATE_IDLE;
+                    FirmwareUpdateEnd_t end = { .update_id = active_update_id, .reject_reason = REJECT_NOR_FLASH_ERROR_OTHER };
+                    App_FDCAN_Send_Message(CAN_ID_FW_END, (uint8_t *)&end, sizeof(end));
+                }
+            }
+            
+            /* ---- 3. Handle Checksum Validation ---- */
+            else if (rxMsg.can_id == CAN_ID_FW_CHECKSUM && state == UPDATER_STATE_RECEIVING) {
+                FirmwareUpdateChecksum_t *checksum = (FirmwareUpdateChecksum_t *)rxMsg.payload;
+                state = UPDATER_STATE_IDLE;
+
+                if (checksum->update_id == active_update_id) {
+                    /* Read accumulated hardware CRC-32 register */
+                    uint32_t computed_crc = __HAL_CRC_DR_RESET(&hcrc); // Gets current value and resets register
+
+                    if (computed_crc == checksum->crc) {
+                        printf("[SLAVE] SUCCESS! CRCs MATCH (0x%08lX).\r\n", (unsigned long)computed_crc);
+                        
+                        /* Send success End frame */
+                        FirmwareUpdateEnd_t end = { .update_id = active_update_id, .reject_reason = REJECT_SUCCEEDED };
+                        App_FDCAN_Send_Message(CAN_ID_FW_END, (uint8_t *)&end, sizeof(end));
+                        
+                        /* Delay briefly to allow FDCAN transmission to complete */
+                        vTaskDelay(pdMS_TO_TICKS(100));
+
+                        /* Prepare bootloader state swap marker */
+                        printf("[SLAVE] Setting MAGIC_SWAP at 0x%08lX and rebooting...\r\n", (unsigned long)ADDR_BOOT_STATE);
+                        if (App_Flash_Erase(ADDR_BOOT_STATE, FLASH_PAGE_SIZE) == HAL_OK) {
+                            if (App_Flash_Write(ADDR_BOOT_STATE, MAGIC_SWAP, 16) == HAL_OK) {
+                                printf("[SLAVE] System reboot initiated...\r\n");
+                                NVIC_SystemReset(); // Reboot into bootloader
+                            }
+                        }
+                    } else {
+                        printf("[SLAVE] ERROR: CRC MISMATCH! Computed: 0x%08lX, Expected: 0x%08lX\r\n", 
+                               (unsigned long)computed_crc, (unsigned long)checksum->crc);
+                        FirmwareUpdateEnd_t end = { .update_id = active_update_id, .reject_reason = REJECT_CRC_ERROR };
+                        App_FDCAN_Send_Message(CAN_ID_FW_END, (uint8_t *)&end, sizeof(end));
+                    }
+                }
+            }
+        }
+    }
+}
+
+/* Append to Core/Src/app_freertos.c */
+
+void FwSimMaster_Task(void *argument) {
+    /* 1. Generate 64-byte mock binary file: [0, 1, 2, ..., 63] */
+    uint8_t mock_binary[64];
+    for (int i = 0; i < 64; i++) {
+        mock_binary[i] = i;
+    }
+    
+    /* 2. Compute expected CRC-32 in software */
+    /* Resets the register, calculates, and returns */
+    uint32_t expected_crc = HAL_CRC_Calculate(&hcrc, (uint32_t *)mock_binary, 16); 
+    
+    /* Give the system 3 seconds to fully boot and stabilize before launching loopback test */
+    vTaskDelay(pdMS_TO_TICKS(3000));
+    
+    printf("\r\n=============================================\r\n");
+    printf("   LAUNCHING SELF-CONTAINED FDCAN LOOPBACK TEST   \r\n");
+    printf("=============================================\r\n");
+    printf("[MASTER] Mock Binary Size: 64 bytes, Expected CRC: 0x%08lX\r\n", (unsigned long)expected_crc);
+
+    /* 3. Send Init packet onto the internal loopback bus */
+    FirmwareUpdateInit_t init = { .update_id = 999, .recipient_id = 0xAA, .total_size = 64 };
+    App_FDCAN_Send_Message(CAN_ID_FW_INIT, (uint8_t *)&init, sizeof(init));
+
+    FwCanRxQueueMsg_t rxMsg;
+    for (;;) {
+        /* 
+         * To avoid interfering with the Slave task's global queue subscription, 
+         * we intercept messages meant for the Master (Segment Requests and Checksum Requests)
+         * by directly polling FIFO 0 using standard non-blocking HAL calls.
+         */
+        FDCAN_RxHeaderTypeDef RxHeader;
+        uint8_t payload[64];
+        
+        if (HAL_FDCAN_GetRxMessage(&hfdcan1, FDCAN_RX_FIFO0, &RxHeader, payload) == HAL_OK) {
+            uint32_t id = RxHeader.Identifier;
+            
+            /* ---- A. Handle Segment Request ---- */
+            if (id == CAN_ID_FW_SEG_REQ) {
+                FirmwareUpdateSegmentRequest_t *req = (FirmwareUpdateSegmentRequest_t *)payload;
+                uint32_t offset = req->segment_id * 32;
+                
+                printf("[MASTER] Received request for Segment index %lu (Offset %lu)\r\n", 
+                       (unsigned long)req->segment_id, (unsigned long)offset);
+
+                /* Package 32-byte chunk */
+                FirmwareUpdateSegment_t seg;
+                seg.update_id = req->update_id;
+                seg.segment_id = req->segment_id;
+                seg.data_length = 32;
+                memcpy(seg.segment_data, &mock_binary[offset], 32);
+
+                vTaskDelay(pdMS_TO_TICKS(100)); // Simulate propagation delay
+                App_FDCAN_Send_Message(CAN_ID_FW_SEGMENT, (uint8_t *)&seg, sizeof(seg));
+            }
+            
+            /* ---- B. Handle Checksum Request ---- */
+            else if (id == CAN_ID_FW_CHKSUM_REQ) {
+                FirmwareUpdateChecksumRequest_t *req = (FirmwareUpdateChecksumRequest_t *)payload;
+                printf("[MASTER] Received Checksum Request. Transmitting expected CRC: 0x%08lX...\r\n", 
+                       (unsigned long)expected_crc);
+
+                FirmwareUpdateChecksum_t checksum = { .update_id = req->update_id, .crc = expected_crc };
+                vTaskDelay(pdMS_TO_TICKS(100));
+                App_FDCAN_Send_Message(CAN_ID_FW_CHECKSUM, (uint8_t *)&checksum, sizeof(checksum));
+            }
+            
+            /* ---- C. Handle End Transaction ---- */
+            else if (id == CAN_ID_FW_END) {
+                FirmwareUpdateEnd_t *end = (FirmwareUpdateEnd_t *)payload;
+                printf("[MASTER] Transaction closed by slave. Reject Reason / Success Code: %d\r\n", 
+                       end->reject_reason);
+                
+                if (end->reject_reason == REJECT_SUCCEEDED) {
+                    printf("\r\n=============================================\r\n");
+                    printf("     LOOPBACK TEST COMPLETED SUCCESSFULLY!    \r\n");
+                    printf("=============================================\r\n");
+                }
+            }
+        }
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+}
 /* USER CODE END Application */

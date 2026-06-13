@@ -49,6 +49,7 @@ PCD_HandleTypeDef hpcd_USB_OTG_HS;
 
 /* USER CODE BEGIN PV */
 FDCAN_HandleTypeDef hfdcan1;
+CRC_HandleTypeDef hcrc;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -60,6 +61,7 @@ static void MX_ICACHE_Init(void);
 static void MX_USB_OTG_HS_PCD_Init(void);
 /* USER CODE BEGIN PFP */
 static void MX_FDCAN1_Init(void);
+static void MX_CRC_Init(void);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -116,6 +118,7 @@ int main(void)
   MX_GPIO_Init();
   MX_ICACHE_Init();
   MX_FDCAN1_Init();
+  MX_CRC_Init();
   //MX_USB_OTG_HS_PCD_Init();
   /* USER CODE BEGIN 2 */
 
@@ -451,6 +454,28 @@ static void MX_FDCAN1_Init(void)
 
   /* 3. Initialize Peripheral */
   if (HAL_FDCAN_Init(&hfdcan1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+}
+
+/**
+  * @brief CRC Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_CRC_Init(void)
+{
+  __HAL_RCC_CRC_CLK_ENABLE(); // Enable hardware clock to the CRC engine
+
+  hcrc.Instance = CRC;
+  hcrc.Init.DefaultPolynomialUse = DEFAULT_POLYNOMIAL_ENABLE;
+  hcrc.Init.DefaultInitValueUse = DEFAULT_INIT_VALUE_ENABLE;
+  hcrc.Init.InputDataInversion = CRC_INPUTDATA_INVERSION_NONE;
+  hcrc.Init.OutputDataInversion = CRC_OUTPUTDATA_INVERSION_DISABLE;
+  hcrc.InputDataFormat = CRC_INPUTDATA_FORMAT_WORDS;
+
+  if (HAL_CRC_Init(&hcrc) != HAL_OK)
   {
     Error_Handler();
   }
