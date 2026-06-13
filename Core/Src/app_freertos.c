@@ -19,10 +19,12 @@
   
 /* Includes ------------------------------------------------------------------*/
 #include "app_freertos.h"
+#include "flash_driver.h"
   
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include <stdio.h>
+#include <string.h>
 #include "main.h" // Gives access to BSP LEDs and UART handles
 /* USER CODE END Includes */
   
@@ -140,15 +142,67 @@ void MX_FREERTOS_Init(void) {
 * @retval None
 */
 /* USER CODE END Header_StartDefaultTask */
+/* Inside your default FreeRTOS startup task: */
 void StartDefaultTask(void *argument)
 {
-  /* USER CODE BEGIN defaultTask */
-  // Keep the default task running but silent to avoid cluttering the prints
+  /* USER CODE BEGIN 5 */
+  
+  printf("\r\n=============================================\r\n");
+  printf("      FreeRTOS Application Initialized       \r\n");
+  printf("=============================================\r\n");
+  printf("[TEST] Initiating internal Flash Driver test...\r\n");
+
+  /* Test payload sequence */
+  uint8_t test_write_data[16] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16};
+  
+  printf("[TEST] Step 1: Erasing DFU target page at 0x%08lX...\r\n", (unsigned long)ADDR_FLASH_DFU);
+  
+  /* Erase a single page at the start of the DFU space */
+  if (App_Flash_Erase(ADDR_FLASH_DFU, FLASH_PAGE_SIZE) == HAL_OK) {
+      
+      printf("[TEST] Step 2: Programming 16-byte verification pattern...\r\n");
+      
+      /* Write the 16 bytes */
+      if (App_Flash_Write(ADDR_FLASH_DFU, test_write_data, 16) == HAL_OK) {
+          
+          printf("[TEST] Step 3: Verifying flash contents...\r\n");
+          
+          /* Read back directly to verify */
+          const uint8_t *read_ptr = (const uint8_t *)ADDR_FLASH_DFU;
+          
+          printf("[TEST] Memory Read-Back: ");
+          for (int i = 0; i < 16; i++) {
+              printf("0x%02X ", read_ptr[i]);
+          }
+          printf("\r\n");
+
+          if (memcmp(read_ptr, test_write_data, 16) == 0) {
+              printf("[TEST] Success! Verification MATCHED expected pattern.\r\n");
+              
+              /* Visual Confirmation: Slow Green LED Toggle */
+              for (int i = 0; i < 4; i++) {
+                  HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_7);
+                  HAL_Delay(500);
+              }
+          } else {
+              printf("[TEST] ERROR: Verification FAILED! Data corruption detected.\r\n");
+          }
+      } else {
+          printf("[TEST] ERROR: Write transaction aborted.\r\n");
+      }
+  } else {
+      printf("[TEST] ERROR: Erase transaction aborted.\r\n");
+  }
+
+  printf("\r\n[SYSTEM] Flash test sequence completed. Starting application runtime...\r\n");
+
+  /* Regular app loop continues... */
   for(;;)
   {
-    osDelay(osWaitForever);
+    HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_7);
+    vTaskDelay(pdMS_TO_TICKS(250)); 
   }
-  /* USER CODE END defaultTask */
+  /* USER CODE END 5 */
 }
   
 /* Private application code --------------------------------------------------*/

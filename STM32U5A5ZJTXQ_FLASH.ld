@@ -42,13 +42,20 @@ _sstack = _estack - _Min_Stack_Size;
 _Min_Heap_Size = 0x200; /* required amount of heap */
 _Min_Stack_Size = 0x400; /* required amount of stack */
 
-/* Memories definition */
+/* STM32U5A5ZJTX_FIRMWARE.ld */
+
 MEMORY
 {
-  RAM   (xrw) : ORIGIN = 0x20000000, LENGTH = 2496K
-  SRAM4 (xrw) : ORIGIN = 0x28000000, LENGTH = 16K
-  FLASH (rx)  : ORIGIN = 0x08040000, LENGTH = 768K
+  /* Tells the compiler that the first 256KB is reserved and cannot be written to */
+  RESERVED_BL (rx) : ORIGIN = 0x08000000, LENGTH = 256K
+  
+  /* Active application partition (Page 32-127) */
+  FLASH       (rx) : ORIGIN = 0x08040000, LENGTH = 768K
+  
+  RAM         (xrw): ORIGIN = 0x20000000, LENGTH = 128K
 }
+
+/* The entry point and sections (.text, .data) will link directly to FLASH (0x08040000) */
 /* Sections */
 SECTIONS
 {
