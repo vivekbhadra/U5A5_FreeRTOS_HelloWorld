@@ -5,6 +5,7 @@
 
 const uint8_t MAGIC_BOOT[16] = {0xD0,0xD0,0xD0,0xD0,0xD0,0xD0,0xD0,0xD0,0xD0,0xD0,0xD0,0xD0,0xD0,0xD0,0xD0,0xD0};
 const uint8_t MAGIC_SWAP[16] = {0xD1,0xD1,0xD1,0xD1,0xD1,0xD1,0xD1,0xD1,0xD1,0xD1,0xD1,0xD1,0xD1,0xD1,0xD1,0xD1};
+const uint8_t MAGIC_REVERT[16] = {0xD2,0xD2,0xD2,0xD2,0xD2,0xD2,0xD2,0xD2,0xD2,0xD2,0xD2,0xD2,0xD2,0xD2,0xD2,0xD2};
 
 /**
  * @brief Erases pages in Bank 1 with safe ICACHE handling.
@@ -110,4 +111,45 @@ HAL_StatusTypeDef App_Flash_Write(uint32_t start_address, const uint8_t *data, u
     }
 
     return status;
+}
+
+/**
+ * @brief Performs the self-validation handshake with the bootloader.
+ *        If State partition is set to MAGIC_REVERT (0xD2), overwrites it with MAGIC_BOOT (0xD0).
+ */
+void Mark_Firmware_As_Valid(void) {
+    const uint8_t *state_ptr = (const uint8_t *)ADDR_BOOT_STATE;
+    
+    printf("\r\n=============================================\r\n");
+    printf("     Verifying Bootloader Handshake State     \r\n");
+    printf("=============================================\r\n");
+
+    /* 1. Check if the State partition is currently in a trial run (MAGIC_REVERT) */
+    int trial_boot_active = 1;
+    for (int i = 0; i < 16; i++) {
+        if (state_ptr[i] != 0xD2) {
+            trial_boot_active = 0;
+            break;
+        }
+    }
+
+    if (trial_boot_active) {
+        printf("[HANDSHAKE] Trial boot detected (MAGIC_REVERT at 0x%08lX)!\r\n", (unsigned long)ADDR_BOOT_STATE);
+        printf("[HANDSHAKE] Self-validating new firmware. Writing MAGIC_BOOT (0xD0)...\r\n");
+        
+        /* 2. Erase State Page */
+        if (App_Flash_Erase(ADDR_BOOT_STATE, FLASH_PAGE_SIZE) == HAL_OK) {
+            /* 3. Write MAGIC_BOOT bytes */
+            if (App_Flash_Write(ADDR_BOOT_STATE, MAGIC_BOOT, 16) == HAL_OK) {
+                printf("[HANDSHAKE] Handshake SUCCESS. Application validated as stable!\r\n");
+            } else {
+                printf("[HANDSHAKE] ERROR: Failed to write validation token!\r\n");
+            }
+        } else {
+            printf("[HANDSHAKE] ERROR: Failed to erase validation sector!\r\n");
+        }
+    } else {
+        printf("[HANDSHAKE] State is not in Trial mode. No flash changes required.\r\n");
+    }
+    printf("=============================================\r\n\r\n");
 }
