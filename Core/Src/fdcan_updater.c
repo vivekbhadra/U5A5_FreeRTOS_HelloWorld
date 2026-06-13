@@ -31,8 +31,8 @@ HAL_StatusTypeDef App_FDCAN_Configure_Filters(void) {
     if (HAL_FDCAN_ConfigGlobalFilter(&hfdcan1, 
                                      FDCAN_REJECT, 
                                      FDCAN_REJECT, 
-                                     FDCAN_FILTER_ON_CONFRX, 
-                                     FDCAN_REJECT) != HAL_OK) {
+                                     FDCAN_REJECT_REMOTE, 
+                                     FDCAN_REJECT_REMOTE) != HAL_OK) {
         printf("[FDCAN] ERROR: Failed to configure Global rejection filters!\r\n");
         return HAL_ERROR;
     }

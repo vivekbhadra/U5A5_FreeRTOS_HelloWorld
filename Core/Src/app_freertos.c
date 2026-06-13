@@ -200,7 +200,7 @@ void StartDefaultTask(void *argument)
   /* Regular app loop continues... */
   for(;;)
   {
-    HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_7);
+    //HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_7);
     vTaskDelay(pdMS_TO_TICKS(250)); 
   }
   /* USER CODE END 5 */
@@ -221,7 +221,7 @@ void StartGreenTask(void *argument)
 
     // Acquire lock: Nobody else can use printf() until we release it
     osMutexAcquire(printMutexHandle, osWaitForever);
-    printf("[GREEN TASK] Green LED Toggled! (Interval: 500ms)\r\n");
+    //printf("[GREEN TASK] Green LED Toggled! (Interval: 500ms)\r\n");
     osMutexRelease(printMutexHandle); // Release lock
 
     osDelay(500);
@@ -240,7 +240,7 @@ void StartBlueTask(void *argument)
 
     // Acquire lock
     osMutexAcquire(printMutexHandle, osWaitForever);
-    printf("  [BLUE TASK] Blue LED Toggled! (Interval: 1000ms)\r\n");
+    //printf("  [BLUE TASK] Blue LED Toggled! (Interval: 1000ms)\r\n");
     osMutexRelease(printMutexHandle); // Release lock
 
     osDelay(1000);
@@ -259,7 +259,7 @@ void StartRedTask(void *argument)
 
     // Acquire lock
     osMutexAcquire(printMutexHandle, osWaitForever);
-    printf("    [RED TASK] Red LED Toggled! (Interval: 1500ms)\r\n");
+   // printf("    [RED TASK] Red LED Toggled! (Interval: 1500ms)\r\n");
     osMutexRelease(printMutexHandle); // Release lock
 
     osDelay(1500);
