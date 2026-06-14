@@ -157,7 +157,7 @@ void MX_FREERTOS_Init(void) {
   };
   static const osThreadAttr_t masterSimTask_attributes = {
     .name = "FwMasterSimTask",
-    .stack_size = 1024,
+    .stack_size = 2048,
     .priority = (osPriority_t) osPriorityNormal,
   };
   updaterTaskHandle = osThreadNew(FirmwareUpdater_Task, NULL, &updaterTask_attributes);
