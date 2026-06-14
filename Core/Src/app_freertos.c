@@ -54,6 +54,7 @@ typedef enum { UPDATER_STATE_IDLE, UPDATER_STATE_RECEIVING } UpdaterState_t;
 
 /* Private variables ---------------------------------------------------------*/
 /* USER CODE BEGIN Variables */
+#define ENABLE_REBOOT_AFTER_UPDATE    0
 extern FDCAN_HandleTypeDef hfdcan1;
 extern CRC_HandleTypeDef hcrc;
 QueueHandle_t CanRxQueue = NULL;
@@ -442,8 +443,12 @@ void FirmwareUpdater_Task(void *argument) {
                    (unsigned long)ADDR_BOOT_STATE);
             if (App_Flash_Erase(ADDR_BOOT_STATE, FLASH_PAGE_SIZE) == HAL_OK) {
               if (App_Flash_Write(ADDR_BOOT_STATE, MAGIC_SWAP, 16) == HAL_OK) {
-                printf("[SLAVE] System reboot initiated...\r\n");
-                NVIC_SystemReset();
+#if ENABLE_REBOOT_AFTER_UPDATE
+    printf("[SLAVE] System reboot initiated...\r\n");
+    NVIC_SystemReset();
+#else
+    printf("[SLAVE] Reboot skipped for debug. MAGIC_SWAP was written.\r\n");
+#endif
               }
             }
           } else {
