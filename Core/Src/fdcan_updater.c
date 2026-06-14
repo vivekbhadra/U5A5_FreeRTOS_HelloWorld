@@ -80,10 +80,10 @@ HAL_StatusTypeDef App_FDCAN_Configure_Filters(void) {
 HAL_StatusTypeDef App_FDCAN_Send_Message(uint32_t can_id, const uint8_t *payload, uint16_t size) {
     FDCAN_TxHeaderTypeDef TxHeader;
     uint16_t mapped_bytes = 0;
-
+ 
     printf("[FDCAN TX] >>> Sending Msg: ID=0x%03lX, Size=%u bytes\r\n", 
            (unsigned long)can_id, (unsigned int)size);
-
+ 
     /* Configure standard FDCAN TX Header attributes */
     TxHeader.Identifier = can_id;
     TxHeader.IdType = FDCAN_STANDARD_ID;
@@ -92,7 +92,7 @@ HAL_StatusTypeDef App_FDCAN_Send_Message(uint32_t can_id, const uint8_t *payload
     TxHeader.BitRateSwitch = FDCAN_BRS_ON;        /* Enable Baud rate acceleration */
     TxHeader.TxEventFifoControl = FDCAN_NO_TX_EVENTS;
     TxHeader.MessageMarker = 0;
-
+ 
     /* Map arbitrary size to strict non-linear CAN FD DLC hardware enums */
     if (size <= 8) {
         TxHeader.DataLength = size;
@@ -119,43 +119,70 @@ HAL_StatusTypeDef App_FDCAN_Send_Message(uint32_t can_id, const uint8_t *payload
         TxHeader.DataLength = FDCAN_DLC_BYTES_64;
         mapped_bytes = 64;
     }
-
+ 
     /* 1. Queue the message inside the hardware Tx FIFO */
     if (HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan1, &TxHeader, (uint8_t *)payload) != HAL_OK) {
         printf("[FDCAN TX] ERROR: Hardware refused to queue ID 0x%03lX!\r\n", (unsigned long)can_id);
         return HAL_ERROR;
     }
-
+ 
     /* 2. Determine which Tx buffer index this message was allocated to */
     uint32_t latest_tx_buffer = HAL_FDCAN_GetLatestTxFifoQRequestBuffer(&hfdcan1);
-
+ 
     /* 3. Wait briefly for the physical transmission attempt to complete */
     /* A 64-byte frame at 1 Mbps nominal takes less than 150 microseconds */
     for (volatile int delay = 0; delay < 1500; delay++) {
         __NOP(); 
     }
-
+ 
     /* 4. Query Hardware Status Registers to evaluate the transmission outcome */
     FDCAN_ProtocolStatusTypeDef protocolStatus = {0};
     FDCAN_ErrorCountersTypeDef errorCounters = {0};
-
+ 
     HAL_FDCAN_GetProtocolStatus(&hfdcan1, &protocolStatus);
     HAL_FDCAN_GetErrorCounters(&hfdcan1, &errorCounters);
     uint32_t is_pending = HAL_FDCAN_IsTxBufferMessagePending(&hfdcan1, latest_tx_buffer);
-    uint32_t rx_fill_level = HAL_FDCAN_GetRxFifoFillLevel(&hfdcan1, FDCAN_RX_FIFO0);
-
+ 
+    /* 4b. Read the raw peripheral registers directly, bypassing HAL interpretation.
+     *     This is the key disambiguation: the HAL fill-level helper can mask whether
+     *     the frame was ever accepted. We want the hardware's own latched counters. */
+    uint32_t raw_psr   = hfdcan1.Instance->PSR;   /* Protocol Status Register   */
+    uint32_t raw_rxf0s = hfdcan1.Instance->RXF0S; /* Rx FIFO 0 Status Register  */
+    uint32_t raw_rxf1s = hfdcan1.Instance->RXF1S; /* Rx FIFO 1 Status Register  */
+    uint32_t raw_ir    = hfdcan1.Instance->IR;    /* Interrupt (event) Register */
+ 
+    /* RXFnS bits [3:0] = Fill Level. PSR bits [2:0] = LEC, [4:3] = Activity. */
+    uint32_t rxf0_fill = raw_rxf0s & 0x7U;
+    uint32_t rxf1_fill = raw_rxf1s & 0x7U;
+ 
+    const char *activity_str;
+    switch (protocolStatus.Activity) {
+        case FDCAN_COM_STATE_SYNC: activity_str = "SYNCHRONIZING (not yet locked)"; break;
+        case FDCAN_COM_STATE_IDLE: activity_str = "IDLE (synced, no traffic)";      break;
+        case FDCAN_COM_STATE_RX:   activity_str = "RECEIVER";                        break;
+        case FDCAN_COM_STATE_TX:   activity_str = "TRANSMITTER";                     break;
+        default:                   activity_str = "UNKNOWN";                         break;
+    }
+ 
     /* 5. Print Detailed Trace Metrics */
-    printf("[FDCAN DIAG] Msg ID=0x%03lX assigned to TxBuffer bitmask: 0x%08lX\r\n", 
+    printf("[FDCAN DIAG] Msg ID=0x%03lX assigned to TxBuffer bitmask: 0x%08lX\r\n",
            (unsigned long)can_id, (unsigned long)latest_tx_buffer);
-    printf("[FDCAN DIAG] Transmission State: %s\r\n", 
-           is_pending ? "STUCK PENDING (Failed to transmit!)" : "COMPLETED (Successfully departed!)");
-    printf("[FDCAN DIAG] Last Error Code (LEC): 0x%lX (0x3=ACK Error, 0x0=No Error)\r\n", 
+    printf("[FDCAN DIAG] Tx Buffer Pending: %s\r\n",
+           is_pending ? "YES (still queued in hardware)" : "NO (left the Tx buffer)");
+    printf("[FDCAN DIAG] Protocol Activity: %s\r\n", activity_str);
+    printf("[FDCAN DIAG] LEC=0x%lX  (0x0=NoError 0x3=ACK 0x7=NoChange/stale)\r\n",
            (unsigned long)protocolStatus.LastErrorCode);
-    printf("[FDCAN DIAG] Hardware Error Counters: TEC=%lu, REC=%lu\r\n", 
+    printf("[FDCAN DIAG] Hardware Error Counters: TEC=%lu, REC=%lu\r\n",
            (unsigned long)errorCounters.TxErrorCnt, (unsigned long)errorCounters.RxErrorCnt);
-    printf("[FDCAN DIAG] RX FIFO 0 Fill Level: %lu messages pending in buffer\r\n", 
-           (unsigned long)rx_fill_level);
+    printf("[FDCAN DIAG] RAW PSR=0x%08lX  IR=0x%08lX\r\n",
+           (unsigned long)raw_psr, (unsigned long)raw_ir);
+    printf("[FDCAN DIAG] RAW RXF0S=0x%08lX (fill=%lu)  RXF1S=0x%08lX (fill=%lu)\r\n",
+           (unsigned long)raw_rxf0s, (unsigned long)rxf0_fill,
+           (unsigned long)raw_rxf1s, (unsigned long)rxf1_fill);
+    printf("[FDCAN DIAG] >> READ THIS: if both fills=0 the looped frame was DROPPED.\r\n");
+    printf("[FDCAN DIAG] >>   Activity=SYNCHRONIZING + fills=0  => bit-timing problem.\r\n");
+    printf("[FDCAN DIAG] >>   Activity=IDLE/TX     + fills=0  => filter/routing problem.\r\n");
     printf("-----------------------------------------------------------------\r\n\r\n");
-
+ 
     return HAL_OK;
 }
