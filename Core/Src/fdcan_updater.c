@@ -266,7 +266,8 @@ App_FDCAN_Send_Message(uint32_t can_id, const uint8_t *payload, uint16_t size) {
   printf("[FDCAN DIAG] RAW RXF0S=0x%08lX (fill=%lu)  RXF1S=0x%08lX (fill=%lu)\r\n",
          (unsigned long)raw_rxf0s, (unsigned long)rxf0_fill,
          (unsigned long)raw_rxf1s, (unsigned long)rxf1_fill);
-  printf("[FDCAN DIAG] >> READ THIS: if both fills=0 the looped frame was DROPPED.\r\n");
+  printf("[FDCAN DIAG] Note: fill=0 only means no message is pending at this exact snapshot.\r\n");
+  printf("[FDCAN DIAG] The frame may have been dropped, not arrived yet, or already drained by ISR/task.\r\n");
   printf("[FDCAN DIAG] >>   Activity=SYNCHRONIZING + fills=0  => bit-timing problem.\r\n");
   printf("[FDCAN DIAG] >>   Activity=IDLE/TX     + fills=0  => filter/routing problem.\r\n");
   printf("-----------------------------------------------------------------\r\n\r\n");
