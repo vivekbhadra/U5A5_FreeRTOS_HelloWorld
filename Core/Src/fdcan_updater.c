@@ -111,6 +111,11 @@ App_FDCAN_Send_Message(uint32_t can_id, const uint8_t *payload, uint16_t size) {
     printf("[FDCAN TX] ERROR: Payload too large: %u bytes\r\n", (unsigned int)size);
     return HAL_ERROR;
   }
+
+  if ((payload == NULL) && (size > 0U)) {
+    printf("[FDCAN TX] ERROR: NULL payload with non-zero size\r\n");
+    return HAL_ERROR;
+  }
   
   memcpy(tx_payload, payload, size);
   
