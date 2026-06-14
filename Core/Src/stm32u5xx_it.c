@@ -22,6 +22,9 @@
 #include "stm32u5xx_it.h"
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "FreeRTOS.h"          // BaseType_t, pdFALSE
+#include "queue.h"             // xQueueSendFromISR
+#include "fdcan_updater.h"     // FwCanRxQueueMsg_t, CAN_ID_* (whatever defines the struct)
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -59,6 +62,7 @@ extern TIM_HandleTypeDef htim6;
 
 /* USER CODE BEGIN EV */
 extern FDCAN_HandleTypeDef hfdcan1;
+extern QueueHandle_t CanRxQueue;
 /* USER CODE END EV */
 
 /******************************************************************************/
@@ -194,5 +198,21 @@ void TIM6_IRQHandler(void)
 void FDCAN1_IT0_IRQHandler(void)
 {
   HAL_FDCAN_IRQHandler(&hfdcan1);
+}
+
+volatile uint32_t g_rx_isr_count = 0;
+void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hfdcan, uint32_t RxFifo0ITs) {
+    if (RxFifo0ITs & FDCAN_IT_RX_FIFO0_NEW_MESSAGE) {
+        FDCAN_RxHeaderTypeDef RxHeader;
+        FwCanRxQueueMsg_t msg;
+
+        if (HAL_FDCAN_GetRxMessage(hfdcan, FDCAN_RX_FIFO0, &RxHeader, msg.payload) == HAL_OK) {
+            msg.can_id = RxHeader.Identifier;
+            BaseType_t hpw = pdFALSE;
+            xQueueSendFromISR(CanRxQueue, &msg, &hpw);
+            portYIELD_FROM_ISR(hpw);
+        }
+        g_rx_isr_count++;
+    }
 }
 /* USER CODE END 1 */

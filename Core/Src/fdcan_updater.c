@@ -9,70 +9,79 @@ extern FDCAN_HandleTypeDef hfdcan1;
  * @brief Configures standard FDCAN filters to routing update range into FIFO 0, 
  *        and starts the CAN controller.
  */
-HAL_StatusTypeDef App_FDCAN_Configure_Filters() {
+HAL_StatusTypeDef App_FDCAN_Configure_Filters(void) {
     FDCAN_FilterTypeDef sFilterConfig;
 
-    /* 1. NVIC Interrupt Configuration (Moved from main to keep main clean) */
-    // HAL_NVIC_SetPriority(FDCAN1_IT0_IRQn, 5, 0); 
-    // HAL_NVIC_EnableIRQ(FDCAN1_IT0_IRQn);         
-    // printf("[FDCAN] Configuring hardware message filters...\r\n");
-
-    /* 1. Setup range filter to accept Standard IDs 0x200 to 0x205 */
+    printf("[FDCAN] Configuring hardware message filters...\r\n");
+  
+    /* Filter 0: Route 0x200 to 0x201 (Init & Segment) to FIFO 0 */
     sFilterConfig.IdType = FDCAN_STANDARD_ID;
     sFilterConfig.FilterIndex = 0;
     sFilterConfig.FilterType = FDCAN_FILTER_RANGE;
     sFilterConfig.FilterConfig = FDCAN_FILTER_TO_RXFIFO0;
-    sFilterConfig.FilterID1 = CAN_ID_FW_INIT;      /* 0x200 */
-    sFilterConfig.FilterID2 = CAN_ID_FW_END;       /* 0x205 */
+    sFilterConfig.FilterID1 = CAN_ID_FW_INIT;     /* 0x200 */
+    sFilterConfig.FilterID2 = CAN_ID_FW_SEGMENT;  /* 0x201 */
+    HAL_FDCAN_ConfigFilter(&hfdcan1, &sFilterConfig);
 
-    if (HAL_FDCAN_ConfigFilter(&hfdcan1, &sFilterConfig) != HAL_OK) {
-        printf("[FDCAN] ERROR: Failed to configure range filters!\r\n");
-        return HAL_ERROR;
-    } else {
-        printf("[FDCAN]: Configured range filters!\r\n");
-    }
+    /* Filter 1: Route 0x202 (Segment Request) to FIFO 1 */
+    sFilterConfig.FilterIndex = 1;
+    sFilterConfig.FilterType = FDCAN_FILTER_RANGE;
+    sFilterConfig.FilterConfig = FDCAN_FILTER_TO_RXFIFO1;
+    sFilterConfig.FilterID1 = CAN_ID_FW_SEG_REQ;  /* 0x202 */
+    sFilterConfig.FilterID2 = CAN_ID_FW_SEG_REQ;  /* 0x202 */
+    HAL_FDCAN_ConfigFilter(&hfdcan1, &sFilterConfig);
 
-    /* 2. Configure global filters to reject anything outside our update ID ranges */
-    if (HAL_FDCAN_ConfigGlobalFilter(&hfdcan1, 
-                                     FDCAN_REJECT, 
-                                     FDCAN_REJECT, 
-                                     FDCAN_REJECT_REMOTE, 
+    /* Filter 2: Route 0x203 (Checksum) to FIFO 0 */
+    sFilterConfig.FilterIndex = 2;
+    sFilterConfig.FilterType = FDCAN_FILTER_RANGE;
+    sFilterConfig.FilterConfig = FDCAN_FILTER_TO_RXFIFO0;
+    sFilterConfig.FilterID1 = CAN_ID_FW_CHECKSUM; /* 0x203 */
+    sFilterConfig.FilterID2 = CAN_ID_FW_CHECKSUM; /* 0x203 */
+    HAL_FDCAN_ConfigFilter(&hfdcan1, &sFilterConfig);
+
+    /* Filter 3: Route 0x204 to 0x205 (Checksum Request & End) to FIFO 1 */
+    sFilterConfig.FilterIndex = 3;
+    sFilterConfig.FilterType = FDCAN_FILTER_RANGE;
+    sFilterConfig.FilterConfig = FDCAN_FILTER_TO_RXFIFO1;
+    sFilterConfig.FilterID1 = CAN_ID_FW_CHKSUM_REQ; /* 0x204 */
+    sFilterConfig.FilterID2 = CAN_ID_FW_END;        /* 0x205 */
+    HAL_FDCAN_ConfigFilter(&hfdcan1, &sFilterConfig);
+  
+    /* Configure global filters to reject anything outside our filter ranges */
+    if (HAL_FDCAN_ConfigGlobalFilter(&hfdcan1,
+                                     FDCAN_REJECT,
+                                     FDCAN_REJECT,
+                                     FDCAN_REJECT_REMOTE,
                                      FDCAN_REJECT_REMOTE) != HAL_OK) {
         printf("[FDCAN] ERROR: Failed to configure Global rejection filters!\r\n");
         return HAL_ERROR;
-    } else {
-        printf("[FDCAN]: Configured Global rejection filters!\r\n");
     }
-
-    /* 3. Start the FDCAN controller */
+  
+    /* Start the FDCAN controller */
     if (HAL_FDCAN_Start(&hfdcan1) != HAL_OK) {
         printf("[FDCAN] ERROR: FDCAN failed to transition to START state!\r\n");
         return HAL_ERROR;
-    } else {
-        printf("[FDCAN]: successfully transitioned to START state!\r\n");
     }
-
-    /* 4. Enable FIFO 0 Interrupt (So we can queue messages inside our ISR callback) */
-    if (HAL_FDCAN_ActivateNotification(&hfdcan1, FDCAN_IT_RX_FIFO0_NEW_MESSAGE, 0) != HAL_OK) {
-        printf("[FDCAN] ERROR: Failed to activate FIFO0 RX interrupt!\r\n");
-        return HAL_ERROR;
-    } else {
-        printf("[FDCAN]: successfully activated FIFO0 RX interrupt!\r\n");
-    }
-
+  
+    /* Enable FIFO 0 Interrupt (Used by Slave) */
+    HAL_FDCAN_ActivateNotification(&hfdcan1, FDCAN_IT_RX_FIFO0_NEW_MESSAGE, 0);
+  
     printf("[FDCAN] Filters configured. Hardware is ACTIVE and listening.\r\n");
     return HAL_OK;
 }
-
 /**
  * @brief Transmits a message over FDCAN with correct CAN FD formatting
+ */
+/* In Core/Src/fdcan_updater.c */
+
+/**
+ * @brief Transmits a message over FDCAN with comprehensive hardware and loopback diagnostic traces.
  */
 HAL_StatusTypeDef App_FDCAN_Send_Message(uint32_t can_id, const uint8_t *payload, uint16_t size) {
     FDCAN_TxHeaderTypeDef TxHeader;
     uint16_t mapped_bytes = 0;
 
-    /* STEP 1: Log Function Entry and Raw Input Parameters */
-    printf("[FDCAN TX] >>> Sending Msg: ID=0x%03lX, Raw Payload Size=%u bytes\r\n", 
+    printf("[FDCAN TX] >>> Sending Msg: ID=0x%03lX, Size=%u bytes\r\n", 
            (unsigned long)can_id, (unsigned int)size);
 
     /* Configure standard FDCAN TX Header attributes */
@@ -84,7 +93,7 @@ HAL_StatusTypeDef App_FDCAN_Send_Message(uint32_t can_id, const uint8_t *payload
     TxHeader.TxEventFifoControl = FDCAN_NO_TX_EVENTS;
     TxHeader.MessageMarker = 0;
 
-    /* STEP 2: Map arbitrary size to strict non-linear CAN FD DLC hardware enums */
+    /* Map arbitrary size to strict non-linear CAN FD DLC hardware enums */
     if (size <= 8) {
         TxHeader.DataLength = size;
         mapped_bytes = size;
@@ -111,35 +120,42 @@ HAL_StatusTypeDef App_FDCAN_Send_Message(uint32_t can_id, const uint8_t *payload
         mapped_bytes = 64;
     }
 
-    /* Log the DLC mapping result */
-    printf("[FDCAN TX] Mapping DLC: requested=%u bytes -> mapped to hardware limit=%u bytes\r\n", 
-           (unsigned int)size, (unsigned int)mapped_bytes);
-
-    /* STEP 3: Print a Hexadecimal Preview of the Payload */
-    if (payload != NULL && mapped_bytes > 0) {
-        uint16_t preview_len = (mapped_bytes > 8) ? 8 : mapped_bytes;
-        printf("[FDCAN TX] Payload Hex Preview (first %u bytes): ", (unsigned int)preview_len);
-        for (int i = 0; i < preview_len; i++) {
-            printf("%02X ", payload[i]);
-        }
-        if (mapped_bytes > 8) {
-            printf("..."); /* Indicate there are more bytes in the packet */
-        }
-        printf("\r\n");
-    } else {
-        printf("[FDCAN TX] Payload is NULL or empty.\r\n");
-    }
-
-    /* STEP 4: Log Hardware Queue Action and Evaluate FIFO Result */
-    printf("[FDCAN TX] Attempting to write frame to STM32 TX FIFO...\r\n");
-
+    /* 1. Queue the message inside the hardware Tx FIFO */
     if (HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan1, &TxHeader, (uint8_t *)payload) != HAL_OK) {
-        printf("[FDCAN TX] ERROR: Hardware refused to queue ID 0x%03lX (FIFO full or Controller Offline)!\r\n", 
-               (unsigned long)can_id);
+        printf("[FDCAN TX] ERROR: Hardware refused to queue ID 0x%03lX!\r\n", (unsigned long)can_id);
         return HAL_ERROR;
-    } else {
-        /* STEP 5: Success Confirmation Log */
-        printf("[FDCAN TX] SUCCESS: Message ID 0x%03lX queued successfully.\r\n\r\n", (unsigned long)can_id);
     }
+
+    /* 2. Determine which Tx buffer index this message was allocated to */
+    uint32_t latest_tx_buffer = HAL_FDCAN_GetLatestTxFifoQRequestBuffer(&hfdcan1);
+
+    /* 3. Wait briefly for the physical transmission attempt to complete */
+    /* A 64-byte frame at 1 Mbps nominal takes less than 150 microseconds */
+    for (volatile int delay = 0; delay < 1500; delay++) {
+        __NOP(); 
+    }
+
+    /* 4. Query Hardware Status Registers to evaluate the transmission outcome */
+    FDCAN_ProtocolStatusTypeDef protocolStatus = {0};
+    FDCAN_ErrorCountersTypeDef errorCounters = {0};
+
+    HAL_FDCAN_GetProtocolStatus(&hfdcan1, &protocolStatus);
+    HAL_FDCAN_GetErrorCounters(&hfdcan1, &errorCounters);
+    uint32_t is_pending = HAL_FDCAN_IsTxBufferMessagePending(&hfdcan1, latest_tx_buffer);
+    uint32_t rx_fill_level = HAL_FDCAN_GetRxFifoFillLevel(&hfdcan1, FDCAN_RX_FIFO0);
+
+    /* 5. Print Detailed Trace Metrics */
+    printf("[FDCAN DIAG] Msg ID=0x%03lX assigned to TxBuffer bitmask: 0x%08lX\r\n", 
+           (unsigned long)can_id, (unsigned long)latest_tx_buffer);
+    printf("[FDCAN DIAG] Transmission State: %s\r\n", 
+           is_pending ? "STUCK PENDING (Failed to transmit!)" : "COMPLETED (Successfully departed!)");
+    printf("[FDCAN DIAG] Last Error Code (LEC): 0x%lX (0x3=ACK Error, 0x0=No Error)\r\n", 
+           (unsigned long)protocolStatus.LastErrorCode);
+    printf("[FDCAN DIAG] Hardware Error Counters: TEC=%lu, REC=%lu\r\n", 
+           (unsigned long)errorCounters.TxErrorCnt, (unsigned long)errorCounters.RxErrorCnt);
+    printf("[FDCAN DIAG] RX FIFO 0 Fill Level: %lu messages pending in buffer\r\n", 
+           (unsigned long)rx_fill_level);
+    printf("-----------------------------------------------------------------\r\n\r\n");
+
     return HAL_OK;
 }

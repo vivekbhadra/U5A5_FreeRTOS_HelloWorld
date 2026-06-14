@@ -324,21 +324,17 @@ void FirmwareUpdater_Task(void *argument) {
     printf("[SLAVE] Production Updater Task Started.\r\n");
 
     for (;;) {
-        /* Block and wait indefinitely for incoming looped CAN FD frames */
         if (xQueueReceive(CanRxQueue, &rxMsg, portMAX_DELAY) == pdPASS) {
             
             /* ---- 1. Handle Update Init ---- */
             if (rxMsg.can_id == CAN_ID_FW_INIT && state == UPDATER_STATE_IDLE) {
                 FirmwareUpdateInit_t *init = (FirmwareUpdateInit_t *)rxMsg.payload;
                 
-                /* Target validation (Board ID 0xAA) */
                 if (init->recipient_id == 0xAA) {
                     printf("[SLAVE] Init Recv: UpdateID=%u, Size=%lu bytes\r\n", 
                            init->update_id, (unsigned long)init->total_size);
                     
-                    /* Erase DFU Partition completely before receiving segments */
                     if (App_Flash_Erase(ADDR_FLASH_DFU, DFU_PARTITION_SIZE) == HAL_OK) {
-                        /* Reset STM32 hardware CRC peripheral accumulator */
                         __HAL_CRC_DR_RESET(&hcrc);
                         
                         active_update_id = init->update_id;
@@ -347,7 +343,6 @@ void FirmwareUpdater_Task(void *argument) {
                         total_bytes_written = 0;
                         state = UPDATER_STATE_RECEIVING;
 
-                        /* Request first chunk (Segment index 0) */
                         FirmwareUpdateSegmentRequest_t req = { .update_id = active_update_id, .segment_id = 0 };
                         App_FDCAN_Send_Message(CAN_ID_FW_SEG_REQ, (uint8_t *)&req, sizeof(req));
                     } else {
@@ -370,25 +365,22 @@ void FirmwareUpdater_Task(void *argument) {
                     continue;
                 }
 
-                /* Construct 16-byte aligned array for quad-word flash writer */
                 uint8_t write_block[32] = {0};
                 memcpy(write_block, seg->segment_data, seg->data_length);
                 
                 uint32_t offset = seg->segment_id * 32;
                 if (App_Flash_Write(ADDR_FLASH_DFU + offset, write_block, 32) == HAL_OK) {
                     
-                    /* Accumulate CRC in hardware using 32-bit words */
+                    /* FIXED: Length is 8 Words (32 bytes / 4) because InputDataFormat is WORDS */
                     HAL_CRC_Accumulate(&hcrc, (uint32_t *)write_block, 8);
                     
                     expected_segment++;
                     total_bytes_written += seg->data_length;
                     
                     if (total_bytes_written == total_size) {
-                        /* Request final checksum validation from master */
                         FirmwareUpdateChecksumRequest_t chk_req = { .update_id = active_update_id };
                         App_FDCAN_Send_Message(CAN_ID_FW_CHKSUM_REQ, (uint8_t *)&chk_req, sizeof(chk_req));
                     } else {
-                        /* Request next segment */
                         FirmwareUpdateSegmentRequest_t req = { .update_id = active_update_id, .segment_id = expected_segment };
                         App_FDCAN_Send_Message(CAN_ID_FW_SEG_REQ, (uint8_t *)&req, sizeof(req));
                     }
@@ -398,31 +390,31 @@ void FirmwareUpdater_Task(void *argument) {
                     App_FDCAN_Send_Message(CAN_ID_FW_END, (uint8_t *)&end, sizeof(end));
                 }
             }
+            
             /* ---- 3. Handle Checksum Validation ---- */
             else if (rxMsg.can_id == CAN_ID_FW_CHECKSUM && state == UPDATER_STATE_RECEIVING) {
                 FirmwareUpdateChecksum_t *checksum = (FirmwareUpdateChecksum_t *)rxMsg.payload;
                 state = UPDATER_STATE_IDLE;
 
                 if (checksum->update_id == active_update_id) {
-                    /* Read accumulated hardware CRC-32 register */
-                    uint32_t computed_crc = __HAL_CRC_DR_RESET(&hcrc); // Gets current value and resets register
+                    
+                    /* FIXED 1: Read the accumulated CRC from the Data Register (DR) first, then reset */
+                    uint32_t computed_crc = hcrc.Instance->DR; 
+                    __HAL_CRC_DR_RESET(&hcrc);                 
 
                     if (computed_crc == checksum->crc) {
                         printf("[SLAVE] SUCCESS! CRCs MATCH (0x%08lX).\r\n", (unsigned long)computed_crc);
                         
-                        /* Send success End frame */
                         FirmwareUpdateEnd_t end = { .update_id = active_update_id, .reject_reason = REJECT_SUCCEEDED };
                         App_FDCAN_Send_Message(CAN_ID_FW_END, (uint8_t *)&end, sizeof(end));
                         
-                        /* Delay briefly to allow FDCAN transmission to complete */
                         vTaskDelay(pdMS_TO_TICKS(100));
 
-                        /* Prepare bootloader state swap marker */
                         printf("[SLAVE] Setting MAGIC_SWAP at 0x%08lX and rebooting...\r\n", (unsigned long)ADDR_BOOT_STATE);
                         if (App_Flash_Erase(ADDR_BOOT_STATE, FLASH_PAGE_SIZE) == HAL_OK) {
                             if (App_Flash_Write(ADDR_BOOT_STATE, MAGIC_SWAP, 16) == HAL_OK) {
                                 printf("[SLAVE] System reboot initiated...\r\n");
-                                NVIC_SystemReset(); // Reboot into bootloader
+                                NVIC_SystemReset();
                             }
                         }
                     } else {
@@ -440,17 +432,14 @@ void FirmwareUpdater_Task(void *argument) {
 /* Append to Core/Src/app_freertos.c */
 
 void FwSimMaster_Task(void *argument) {
-    /* 1. Generate 64-byte mock binary file: [0, 1, 2, ..., 63] */
     uint8_t mock_binary[64];
     for (int i = 0; i < 64; i++) {
         mock_binary[i] = i;
     }
     
-    /* 2. Compute expected CRC-32 in software */
-    /* Resets the register, calculates, and returns */
+    /* FIXED: Length is 16 Words (64 bytes / 4) because InputDataFormat is WORDS */
     uint32_t expected_crc = HAL_CRC_Calculate(&hcrc, (uint32_t *)mock_binary, 16); 
     
-    /* Give the system 3 seconds to fully boot and stabilize before launching loopback test */
     vTaskDelay(pdMS_TO_TICKS(3000));
     
     printf("\r\n=============================================\r\n");
@@ -458,20 +447,16 @@ void FwSimMaster_Task(void *argument) {
     printf("=============================================\r\n");
     printf("[MASTER] Mock Binary Size: 64 bytes, Expected CRC: 0x%08lX\r\n", (unsigned long)expected_crc);
 
-    /* 3. Send Init packet onto the internal loopback bus */
+    /* Send Init packet onto the internal loopback bus */
     FirmwareUpdateInit_t init = { .update_id = 999, .recipient_id = 0xAA, .total_size = 64 };
     App_FDCAN_Send_Message(CAN_ID_FW_INIT, (uint8_t *)&init, sizeof(init));
 
     for (;;) {
-        /* 
-         * To avoid interfering with the Slave task's global queue subscription, 
-         * we intercept messages meant for the Master (Segment Requests and Checksum Requests)
-         * by directly polling FIFO 0 using standard non-blocking HAL calls.
-         */
         FDCAN_RxHeaderTypeDef RxHeader;
         uint8_t payload[64];
         
-        if (HAL_FDCAN_GetRxMessage(&hfdcan1, FDCAN_RX_FIFO0, &RxHeader, payload) == HAL_OK) {
+        /* FIXED 2: Master polls FIFO 1 to prevent conflict with Slave's FIFO 0 ISR callback */
+        if (HAL_FDCAN_GetRxMessage(&hfdcan1, FDCAN_RX_FIFO1, &RxHeader, payload) == HAL_OK) {
             uint32_t id = RxHeader.Identifier;
             
             /* ---- A. Handle Segment Request ---- */
@@ -482,14 +467,13 @@ void FwSimMaster_Task(void *argument) {
                 printf("[MASTER] Received request for Segment index %lu (Offset %lu)\r\n", 
                        (unsigned long)req->segment_id, (unsigned long)offset);
 
-                /* Package 32-byte chunk */
                 FirmwareUpdateSegment_t seg;
                 seg.update_id = req->update_id;
                 seg.segment_id = req->segment_id;
                 seg.data_length = 32;
                 memcpy(seg.segment_data, &mock_binary[offset], 32);
 
-                vTaskDelay(pdMS_TO_TICKS(100)); // Simulate propagation delay
+                vTaskDelay(pdMS_TO_TICKS(100));
                 App_FDCAN_Send_Message(CAN_ID_FW_SEGMENT, (uint8_t *)&seg, sizeof(seg));
             }
             
