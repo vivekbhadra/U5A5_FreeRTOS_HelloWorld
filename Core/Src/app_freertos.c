@@ -394,6 +394,16 @@ void FirmwareUpdater_Task(void *argument) {
             /* ---- 3. Handle Checksum Validation ---- */
             else if (rxMsg.can_id == CAN_ID_FW_CHECKSUM && state == UPDATER_STATE_RECEIVING) {
                 FirmwareUpdateChecksum_t *checksum = (FirmwareUpdateChecksum_t *)rxMsg.payload;
+                if (total_bytes_written != total_size || total_bytes_written == 0) {
+                    printf("[SLAVE] ERROR: Checksum before all segments received "
+                        "(%lu of %lu bytes).\r\n",
+                        (unsigned long)total_bytes_written, (unsigned long)total_size);
+                     state = UPDATER_STATE_IDLE;
+                     FirmwareUpdateEnd_t end = { .update_id = active_update_id, 
+                                                 .reject_reason = REJECT_PROTOCOL_ERROR };
+                     App_FDCAN_Send_Message(CAN_ID_FW_END, (uint8_t *)&end, sizeof(end));
+                     continue;
+                }
                 state = UPDATER_STATE_IDLE;
 
                 if (checksum->update_id == active_update_id) {
@@ -502,6 +512,27 @@ void FwSimMaster_Task(void *argument) {
             }
         }
         vTaskDelay(pdMS_TO_TICKS(10));
+    }
+}
+
+void vApplicationStackOverflowHook(TaskHandle_t xTask, char *pcTaskName)
+{
+    (void)xTask;
+    printf("[FATAL] STACK OVERFLOW in task: %s\r\n", pcTaskName);
+    taskDISABLE_INTERRUPTS();
+
+    for (;;)
+    {
+    }
+}
+
+void vApplicationMallocFailedHook(void)
+{
+    printf("[FATAL] FreeRTOS malloc failed\r\n");
+    taskDISABLE_INTERRUPTS();
+
+    for (;;)
+    {
     }
 }
 /* USER CODE END Application */
