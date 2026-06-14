@@ -1,30 +1,32 @@
 /* USER CODE BEGIN Header */
 /**
-  ******************************************************************************
-  * @file    stm32u5xx_it.c
-  * @brief   Interrupt Service Routines.
-  ******************************************************************************
-  * @attention
-  *
-  * Copyright (c) 2026 STMicroelectronics.
-  * All rights reserved.
-  *
-  * This software is licensed under terms that can be found in the LICENSE file
-  * in the root directory of this software component.
-  * If no LICENSE file comes with this software, it is provided AS-IS.
-  *
-  ******************************************************************************
-  */
+ ******************************************************************************
+ * @file    stm32u5xx_it.c
+ * @brief   Interrupt Service Routines.
+ ******************************************************************************
+ * @attention
+ *
+ * Copyright (c) 2026 STMicroelectronics.
+ * All rights reserved.
+ *
+ * This software is licensed under terms that can be found in the LICENSE file
+ * in the root directory of this software component.
+ * If no LICENSE file comes with this software, it is provided AS-IS.
+ *
+ ******************************************************************************
+ */
 /* USER CODE END Header */
 
 /* Includes ------------------------------------------------------------------*/
-#include "main.h"
 #include "stm32u5xx_it.h"
+#include "main.h"
+
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include "FreeRTOS.h"          // BaseType_t, pdFALSE
-#include "queue.h"             // xQueueSendFromISR
-#include "fdcan_updater.h"     // FwCanRxQueueMsg_t, CAN_ID_* (whatever defines the struct)
+#include "FreeRTOS.h" // BaseType_t, pdFALSE
+#include "fdcan_updater.h" // FwCanRxQueueMsg_t, CAN_ID_* (whatever defines the struct)
+#include "queue.h"         // xQueueSendFromISR
+
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -69,85 +71,74 @@ extern QueueHandle_t CanRxQueue;
 /*           Cortex Processor Interruption and Exception Handlers          */
 /******************************************************************************/
 /**
-  * @brief This function handles Non maskable interrupt.
-  */
-void NMI_Handler(void)
-{
+ * @brief This function handles Non maskable interrupt.
+ */
+void NMI_Handler(void) {
   /* USER CODE BEGIN NonMaskableInt_IRQn 0 */
 
   /* USER CODE END NonMaskableInt_IRQn 0 */
   /* USER CODE BEGIN NonMaskableInt_IRQn 1 */
-   while (1)
-  {
+  while (1) {
   }
   /* USER CODE END NonMaskableInt_IRQn 1 */
 }
 
 /**
-  * @brief This function handles Hard fault interrupt.
-  */
-void HardFault_Handler(void)
-{
+ * @brief This function handles Hard fault interrupt.
+ */
+void HardFault_Handler(void) {
   /* USER CODE BEGIN HardFault_IRQn 0 */
 
   /* USER CODE END HardFault_IRQn 0 */
-  while (1)
-  {
+  while (1) {
     /* USER CODE BEGIN W1_HardFault_IRQn 0 */
     /* USER CODE END W1_HardFault_IRQn 0 */
   }
 }
 
 /**
-  * @brief This function handles Memory management fault.
-  */
-void MemManage_Handler(void)
-{
+ * @brief This function handles Memory management fault.
+ */
+void MemManage_Handler(void) {
   /* USER CODE BEGIN MemoryManagement_IRQn 0 */
 
   /* USER CODE END MemoryManagement_IRQn 0 */
-  while (1)
-  {
+  while (1) {
     /* USER CODE BEGIN W1_MemoryManagement_IRQn 0 */
     /* USER CODE END W1_MemoryManagement_IRQn 0 */
   }
 }
 
 /**
-  * @brief This function handles Prefetch fault, memory access fault.
-  */
-void BusFault_Handler(void)
-{
+ * @brief This function handles Prefetch fault, memory access fault.
+ */
+void BusFault_Handler(void) {
   /* USER CODE BEGIN BusFault_IRQn 0 */
 
   /* USER CODE END BusFault_IRQn 0 */
-  while (1)
-  {
+  while (1) {
     /* USER CODE BEGIN W1_BusFault_IRQn 0 */
     /* USER CODE END W1_BusFault_IRQn 0 */
   }
 }
 
 /**
-  * @brief This function handles Undefined instruction or illegal state.
-  */
-void UsageFault_Handler(void)
-{
+ * @brief This function handles Undefined instruction or illegal state.
+ */
+void UsageFault_Handler(void) {
   /* USER CODE BEGIN UsageFault_IRQn 0 */
 
   /* USER CODE END UsageFault_IRQn 0 */
-  while (1)
-  {
+  while (1) {
     /* USER CODE BEGIN W1_UsageFault_IRQn 0 */
     /* USER CODE END W1_UsageFault_IRQn 0 */
   }
 }
 
 /**
-  * @brief This function handles Debug monitor.
-  */
-void DebugMon_Handler(void)
-{
+ * @brief This function handles Debug monitor.
+ */
+void DebugMon_Handler(void) {
   /* USER CODE BEGIN DebugMonitor_IRQn 0 */
 
   /* USER CODE END DebugMonitor_IRQn 0 */
@@ -164,10 +155,9 @@ void DebugMon_Handler(void)
 /******************************************************************************/
 
 /**
-  * @brief This function handles EXTI Line13 interrupt.
-  */
-void EXTI13_IRQHandler(void)
-{
+ * @brief This function handles EXTI Line13 interrupt.
+ */
+void EXTI13_IRQHandler(void) {
   /* USER CODE BEGIN EXTI13_IRQn 0 */
 
   /* USER CODE END EXTI13_IRQn 0 */
@@ -178,10 +168,9 @@ void EXTI13_IRQHandler(void)
 }
 
 /**
-  * @brief This function handles TIM6 global interrupt.
-  */
-void TIM6_IRQHandler(void)
-{
+ * @brief This function handles TIM6 global interrupt.
+ */
+void TIM6_IRQHandler(void) {
   /* USER CODE BEGIN TIM6_IRQn 0 */
 
   /* USER CODE END TIM6_IRQn 0 */
@@ -193,26 +182,28 @@ void TIM6_IRQHandler(void)
 
 /* USER CODE BEGIN 1 */
 /**
-  * @brief This function handles FDCAN1 interrupt 0.
-  */
-void FDCAN1_IT0_IRQHandler(void)
-{
-  HAL_FDCAN_IRQHandler(&hfdcan1);
-}
+ * @brief This function handles FDCAN1 interrupt 0.
+ */
+void FDCAN1_IT0_IRQHandler(void) { HAL_FDCAN_IRQHandler(&hfdcan1); }
 
 volatile uint32_t g_rx_isr_count = 0;
-void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hfdcan, uint32_t RxFifo0ITs) {
-    if (RxFifo0ITs & FDCAN_IT_RX_FIFO0_NEW_MESSAGE) {
-        FDCAN_RxHeaderTypeDef RxHeader;
-        FwCanRxQueueMsg_t msg;
+void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hfdcan,
+                               uint32_t RxFifo0ITs) {
+  if (RxFifo0ITs & FDCAN_IT_RX_FIFO0_NEW_MESSAGE) {
+    FDCAN_RxHeaderTypeDef RxHeader;
+    FwCanRxQueueMsg_t msg;
 
-        if (HAL_FDCAN_GetRxMessage(hfdcan, FDCAN_RX_FIFO0, &RxHeader, msg.payload) == HAL_OK) {
-            msg.can_id = RxHeader.Identifier;
-            BaseType_t hpw = pdFALSE;
-            xQueueSendFromISR(CanRxQueue, &msg, &hpw);
-            portYIELD_FROM_ISR(hpw);
-        }
-        g_rx_isr_count++;
+    if (HAL_FDCAN_GetRxMessage(hfdcan, FDCAN_RX_FIFO0, &RxHeader,
+                               msg.payload) == HAL_OK) {
+      msg.can_id = RxHeader.Identifier;
+      printf("[ISR FIFO0] RX ID=0x%03lX DLC=%lu\r\n",
+             (unsigned long)RxHeader.Identifier,
+             (unsigned long)RxHeader.DataLength);
+      BaseType_t hpw = pdFALSE;
+      xQueueSendFromISR(CanRxQueue, &msg, &hpw);
+      portYIELD_FROM_ISR(hpw);
     }
+    g_rx_isr_count++;
+  }
 }
 /* USER CODE END 1 */
