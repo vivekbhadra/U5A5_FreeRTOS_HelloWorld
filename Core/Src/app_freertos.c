@@ -87,21 +87,21 @@ osThreadId_t greenTaskHandle;
 const osThreadAttr_t greenTask_attributes = {
   .name = "greenTask",
   .priority = (osPriority_t) osPriorityNormal,
-  .stack_size = 512 * 4 // Allocates 2048 bytes of stack for printf safety
+  .stack_size = 128 * 4 // Allocates 2048 bytes of stack for printf safety
 };
 
 osThreadId_t blueTaskHandle;
 const osThreadAttr_t blueTask_attributes = {
   .name = "blueTask",
   .priority = (osPriority_t) osPriorityNormal,
-  .stack_size = 512 * 4
+  .stack_size = 128 * 4
 };
 
 osThreadId_t redTaskHandle;
 const osThreadAttr_t redTask_attributes = {
   .name = "redTask",
   .priority = (osPriority_t) osPriorityNormal,
-  .stack_size = 512 * 4
+  .stack_size = 128 * 4
 };
 /* USER CODE END Definitions */
   

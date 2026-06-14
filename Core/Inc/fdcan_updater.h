@@ -64,10 +64,17 @@ typedef struct __attribute__((packed)) {
 } FirmwareUpdateEnd_t;
 
 /* Structure representing an internal FreeRTOS queue frame */
+// typedef struct {
+//     uint32_t can_id;
+//     uint16_t data_length;
+//     uint8_t  payload[64];      /* Fits max FD frame */
+// } FwCanRxQueueMsg_t;
+
 typedef struct {
     uint32_t can_id;
     uint16_t data_length;
-    uint8_t  payload[64];      /* Fits max FD frame */
+    uint8_t  _padding[2];      /* Incremental Add: Aligns payload to 32-bit boundary */
+    uint8_t  payload[64];      /* Fits max FD frame, now perfectly aligned */
 } FwCanRxQueueMsg_t;
 
 /* Initialization Prototypes */

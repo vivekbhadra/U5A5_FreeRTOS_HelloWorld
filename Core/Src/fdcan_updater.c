@@ -69,38 +69,77 @@ HAL_StatusTypeDef App_FDCAN_Configure_Filters() {
  */
 HAL_StatusTypeDef App_FDCAN_Send_Message(uint32_t can_id, const uint8_t *payload, uint16_t size) {
     FDCAN_TxHeaderTypeDef TxHeader;
+    uint16_t mapped_bytes = 0;
 
+    /* STEP 1: Log Function Entry and Raw Input Parameters */
+    printf("[FDCAN TX] >>> Sending Msg: ID=0x%03lX, Raw Payload Size=%u bytes\r\n", 
+           (unsigned long)can_id, (unsigned int)size);
+
+    /* Configure standard FDCAN TX Header attributes */
     TxHeader.Identifier = can_id;
     TxHeader.IdType = FDCAN_STANDARD_ID;
     TxHeader.TxFrameType = FDCAN_DATA_FRAME;
-    TxHeader.FDFormat = FDCAN_FD_CAN; // Select CAN FD Mode
-    TxHeader.BitRateSwitch = FDCAN_BRS_ON; // Enable Baud rate acceleration
+    TxHeader.FDFormat = FDCAN_FD_CAN;             /* Select CAN FD Mode */
+    TxHeader.BitRateSwitch = FDCAN_BRS_ON;        /* Enable Baud rate acceleration */
     TxHeader.TxEventFifoControl = FDCAN_NO_TX_EVENTS;
     TxHeader.MessageMarker = 0;
 
-    /* Map length strictly to HAL FD DLC codes */
+    /* STEP 2: Map arbitrary size to strict non-linear CAN FD DLC hardware enums */
     if (size <= 8) {
         TxHeader.DataLength = size;
+        mapped_bytes = size;
     } else if (size <= 12) {
         TxHeader.DataLength = FDCAN_DLC_BYTES_12;
+        mapped_bytes = 12;
     } else if (size <= 16) {
         TxHeader.DataLength = FDCAN_DLC_BYTES_16;
+        mapped_bytes = 16;
     } else if (size <= 20) {
         TxHeader.DataLength = FDCAN_DLC_BYTES_20;
+        mapped_bytes = 20;
     } else if (size <= 24) {
         TxHeader.DataLength = FDCAN_DLC_BYTES_24;
+        mapped_bytes = 24;
     } else if (size <= 32) {
         TxHeader.DataLength = FDCAN_DLC_BYTES_32;
+        mapped_bytes = 32;
     } else if (size <= 48) {
         TxHeader.DataLength = FDCAN_DLC_BYTES_48;
+        mapped_bytes = 48;
     } else {
         TxHeader.DataLength = FDCAN_DLC_BYTES_64;
+        mapped_bytes = 64;
     }
+
+    /* Log the DLC mapping result */
+    printf("[FDCAN TX] Mapping DLC: requested=%u bytes -> mapped to hardware limit=%u bytes\r\n", 
+           (unsigned int)size, (unsigned int)mapped_bytes);
+
+    /* STEP 3: Print a Hexadecimal Preview of the Payload */
+    if (payload != NULL && mapped_bytes > 0) {
+        uint16_t preview_len = (mapped_bytes > 8) ? 8 : mapped_bytes;
+        printf("[FDCAN TX] Payload Hex Preview (first %u bytes): ", (unsigned int)preview_len);
+        for (int i = 0; i < preview_len; i++) {
+            printf("%02X ", payload[i]);
+        }
+        if (mapped_bytes > 8) {
+            printf("..."); /* Indicate there are more bytes in the packet */
+        }
+        printf("\r\n");
+    } else {
+        printf("[FDCAN TX] Payload is NULL or empty.\r\n");
+    }
+
+    /* STEP 4: Log Hardware Queue Action and Evaluate FIFO Result */
+    printf("[FDCAN TX] Attempting to write frame to STM32 TX FIFO...\r\n");
 
     if (HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan1, &TxHeader, (uint8_t *)payload) != HAL_OK) {
-        printf("[FDCAN] ERROR: Failed to queue TX message ID 0x%03lX!\r\n", (unsigned long)can_id);
+        printf("[FDCAN TX] ERROR: Hardware refused to queue ID 0x%03lX (FIFO full or Controller Offline)!\r\n", 
+               (unsigned long)can_id);
         return HAL_ERROR;
+    } else {
+        /* STEP 5: Success Confirmation Log */
+        printf("[FDCAN TX] SUCCESS: Message ID 0x%03lX queued successfully.\r\n\r\n", (unsigned long)can_id);
     }
-
     return HAL_OK;
 }
