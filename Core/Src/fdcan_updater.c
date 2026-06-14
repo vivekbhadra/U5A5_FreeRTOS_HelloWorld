@@ -9,10 +9,13 @@ extern FDCAN_HandleTypeDef hfdcan1;
  * @brief Configures standard FDCAN filters to routing update range into FIFO 0, 
  *        and starts the CAN controller.
  */
-HAL_StatusTypeDef App_FDCAN_Configure_Filters(void) {
+HAL_StatusTypeDef App_FDCAN_Configure_Filters() {
     FDCAN_FilterTypeDef sFilterConfig;
 
-    printf("[FDCAN] Configuring hardware message filters...\r\n");
+    /* 1. NVIC Interrupt Configuration (Moved from main to keep main clean) */
+    // HAL_NVIC_SetPriority(FDCAN1_IT0_IRQn, 5, 0); 
+    // HAL_NVIC_EnableIRQ(FDCAN1_IT0_IRQn);         
+    // printf("[FDCAN] Configuring hardware message filters...\r\n");
 
     /* 1. Setup range filter to accept Standard IDs 0x200 to 0x205 */
     sFilterConfig.IdType = FDCAN_STANDARD_ID;
@@ -25,6 +28,8 @@ HAL_StatusTypeDef App_FDCAN_Configure_Filters(void) {
     if (HAL_FDCAN_ConfigFilter(&hfdcan1, &sFilterConfig) != HAL_OK) {
         printf("[FDCAN] ERROR: Failed to configure range filters!\r\n");
         return HAL_ERROR;
+    } else {
+        printf("[FDCAN]: Configured range filters!\r\n");
     }
 
     /* 2. Configure global filters to reject anything outside our update ID ranges */
@@ -35,18 +40,24 @@ HAL_StatusTypeDef App_FDCAN_Configure_Filters(void) {
                                      FDCAN_REJECT_REMOTE) != HAL_OK) {
         printf("[FDCAN] ERROR: Failed to configure Global rejection filters!\r\n");
         return HAL_ERROR;
+    } else {
+        printf("[FDCAN]: Configured Global rejection filters!\r\n");
     }
 
     /* 3. Start the FDCAN controller */
     if (HAL_FDCAN_Start(&hfdcan1) != HAL_OK) {
         printf("[FDCAN] ERROR: FDCAN failed to transition to START state!\r\n");
         return HAL_ERROR;
+    } else {
+        printf("[FDCAN]: successfully transitioned to START state!\r\n");
     }
 
     /* 4. Enable FIFO 0 Interrupt (So we can queue messages inside our ISR callback) */
     if (HAL_FDCAN_ActivateNotification(&hfdcan1, FDCAN_IT_RX_FIFO0_NEW_MESSAGE, 0) != HAL_OK) {
         printf("[FDCAN] ERROR: Failed to activate FIFO0 RX interrupt!\r\n");
         return HAL_ERROR;
+    } else {
+        printf("[FDCAN]: successfully activated FIFO0 RX interrupt!\r\n");
     }
 
     printf("[FDCAN] Filters configured. Hardware is ACTIVE and listening.\r\n");

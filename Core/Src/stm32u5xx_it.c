@@ -58,7 +58,7 @@
 extern TIM_HandleTypeDef htim6;
 
 /* USER CODE BEGIN EV */
-
+extern FDCAN_HandleTypeDef hfdcan1;
 /* USER CODE END EV */
 
 /******************************************************************************/
@@ -188,5 +188,11 @@ void TIM6_IRQHandler(void)
 }
 
 /* USER CODE BEGIN 1 */
-
+/**
+  * @brief This function handles FDCAN1 interrupt 0.
+  */
+void FDCAN1_IT0_IRQHandler(void)
+{
+  HAL_FDCAN_IRQHandler(&hfdcan1);
+}
 /* USER CODE END 1 */

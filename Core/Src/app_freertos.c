@@ -62,7 +62,10 @@ extern CRC_HandleTypeDef hcrc;
 QueueHandle_t CanRxQueue = NULL;     
 osThreadId_t  updaterTaskHandle = NULL;   
 osThreadId_t  masterSimTaskHandle = NULL; 
-QueueHandle_t CanRxQueue = NULL;
+
+/* Task Function Prototypes */
+void FirmwareUpdater_Task(void *argument);
+void FwSimMaster_Task(void *argument);
 // Mutex to protect printf from concurrent write interleaving
 osMutexId_t printMutexHandle;
 const osMutexAttr_t printMutex_attributes = {
@@ -176,6 +179,19 @@ void MX_FREERTOS_Init(void) {
 void StartDefaultTask(void *argument)
 {
   /* USER CODE BEGIN 5 */
+
+  /* 1. Immediately handshake with the bootloader upon startup */
+  Mark_Firmware_As_Valid();
+
+  /* 2. Configure and activate FDCAN hardware filters
+        Pass 1: Run Internal Loopback Test (No transceivers needed)
+        Pass 0: Run Normal Bus Mode (Connects to physical CAN transceivers) */
+  if (App_FDCAN_Configure_Filters() == HAL_OK) { // <-- Set to 1 for loopback testing
+      printf("[SYSTEM] FDCAN Loopback started successfully.\r\n");
+  } else {
+      printf("[SYSTEM] FATAL ERROR: Failed to start FDCAN!\r\n");
+  }
+
   
   printf("\r\n=============================================\r\n");
   printf("      FreeRTOS Application Initialized       \r\n");
@@ -382,7 +398,6 @@ void FirmwareUpdater_Task(void *argument) {
                     App_FDCAN_Send_Message(CAN_ID_FW_END, (uint8_t *)&end, sizeof(end));
                 }
             }
-            
             /* ---- 3. Handle Checksum Validation ---- */
             else if (rxMsg.can_id == CAN_ID_FW_CHECKSUM && state == UPDATER_STATE_RECEIVING) {
                 FirmwareUpdateChecksum_t *checksum = (FirmwareUpdateChecksum_t *)rxMsg.payload;
@@ -447,7 +462,6 @@ void FwSimMaster_Task(void *argument) {
     FirmwareUpdateInit_t init = { .update_id = 999, .recipient_id = 0xAA, .total_size = 64 };
     App_FDCAN_Send_Message(CAN_ID_FW_INIT, (uint8_t *)&init, sizeof(init));
 
-    FwCanRxQueueMsg_t rxMsg;
     for (;;) {
         /* 
          * To avoid interfering with the Slave task's global queue subscription, 
