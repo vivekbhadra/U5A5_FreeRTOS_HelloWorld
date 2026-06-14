@@ -24,7 +24,10 @@ HAL_StatusTypeDef App_FDCAN_Configure_Filters(void) {
   sFilterConfig.FilterConfig = FDCAN_FILTER_TO_RXFIFO0;
   sFilterConfig.FilterID1 = CAN_ID_FW_INIT;    /* 0x200 */
   sFilterConfig.FilterID2 = CAN_ID_FW_SEGMENT; /* 0x201 */
-  HAL_FDCAN_ConfigFilter(&hfdcan1, &sFilterConfig);
+  if (HAL_FDCAN_ConfigFilter(&hfdcan1, &sFilterConfig) != HAL_OK) {
+    printf("[FDCAN] ERROR: Failed to configure filter 0\r\n");
+    return HAL_ERROR;
+  }
   
   /* Filter 1: Route 0x202 (Segment Request) to FIFO 1 */
   sFilterConfig.FilterIndex = 1;
@@ -32,7 +35,10 @@ HAL_StatusTypeDef App_FDCAN_Configure_Filters(void) {
   sFilterConfig.FilterConfig = FDCAN_FILTER_TO_RXFIFO1;
   sFilterConfig.FilterID1 = CAN_ID_FW_SEG_REQ; /* 0x202 */
   sFilterConfig.FilterID2 = CAN_ID_FW_SEG_REQ; /* 0x202 */
-  HAL_FDCAN_ConfigFilter(&hfdcan1, &sFilterConfig);
+  if (HAL_FDCAN_ConfigFilter(&hfdcan1, &sFilterConfig) != HAL_OK) {
+    printf("[FDCAN] ERROR: Failed to configure filter 1\r\n");
+    return HAL_ERROR;
+  }
   
   /* Filter 2: Route 0x203 (Checksum) to FIFO 0 */
   sFilterConfig.FilterIndex = 2;
@@ -40,7 +46,10 @@ HAL_StatusTypeDef App_FDCAN_Configure_Filters(void) {
   sFilterConfig.FilterConfig = FDCAN_FILTER_TO_RXFIFO0;
   sFilterConfig.FilterID1 = CAN_ID_FW_CHECKSUM; /* 0x203 */
   sFilterConfig.FilterID2 = CAN_ID_FW_CHECKSUM; /* 0x203 */
-  HAL_FDCAN_ConfigFilter(&hfdcan1, &sFilterConfig);
+  if (HAL_FDCAN_ConfigFilter(&hfdcan1, &sFilterConfig) != HAL_OK) {
+    printf("[FDCAN] ERROR: Failed to configure filter 2\r\n");
+    return HAL_ERROR;
+  }
   
   /* Filter 3: Route 0x204 to 0x205 (Checksum Request & End) to FIFO 1 */
   sFilterConfig.FilterIndex = 3;
@@ -48,7 +57,10 @@ HAL_StatusTypeDef App_FDCAN_Configure_Filters(void) {
   sFilterConfig.FilterConfig = FDCAN_FILTER_TO_RXFIFO1;
   sFilterConfig.FilterID1 = CAN_ID_FW_CHKSUM_REQ; /* 0x204 */
   sFilterConfig.FilterID2 = CAN_ID_FW_END;        /* 0x205 */
-  HAL_FDCAN_ConfigFilter(&hfdcan1, &sFilterConfig);
+  if (HAL_FDCAN_ConfigFilter(&hfdcan1, &sFilterConfig) != HAL_OK) {
+    printf("[FDCAN] ERROR: Failed to configure filter 3\r\n");
+    return HAL_ERROR;
+  }
   
   /* Configure global filters to reject anything outside our filter ranges */
   if (HAL_FDCAN_ConfigGlobalFilter(&hfdcan1, FDCAN_REJECT, FDCAN_REJECT,
