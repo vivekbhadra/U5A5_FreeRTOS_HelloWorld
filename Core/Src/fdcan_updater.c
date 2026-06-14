@@ -65,6 +65,9 @@ HAL_StatusTypeDef App_FDCAN_Configure_Filters(void) {
   
     /* Enable FIFO 0 Interrupt (Used by Slave) */
     HAL_FDCAN_ActivateNotification(&hfdcan1, FDCAN_IT_RX_FIFO0_NEW_MESSAGE, 0);
+
+    HAL_NVIC_SetPriority(FDCAN1_IT0_IRQn, 5, 0);
+    HAL_NVIC_EnableIRQ(FDCAN1_IT0_IRQn);
   
     printf("[FDCAN] Filters configured. Hardware is ACTIVE and listening.\r\n");
     return HAL_OK;
