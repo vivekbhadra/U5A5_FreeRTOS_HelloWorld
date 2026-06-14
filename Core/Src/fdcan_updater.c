@@ -62,6 +62,17 @@ HAL_StatusTypeDef App_FDCAN_Configure_Filters(void) {
         printf("[FDCAN] ERROR: FDCAN failed to transition to START state!\r\n");
         return HAL_ERROR;
     }
+
+    /* Flush any stale frames left in the FIFOs from a previous run/boot
+     * before we enable the interrupt that feeds the queue. */
+    FDCAN_RxHeaderTypeDef tmpHdr;
+    uint8_t tmpData[64];
+    while (HAL_FDCAN_GetRxFifoFillLevel(&hfdcan1, FDCAN_RX_FIFO0) > 0) {
+        HAL_FDCAN_GetRxMessage(&hfdcan1, FDCAN_RX_FIFO0, &tmpHdr, tmpData);
+    }
+    while (HAL_FDCAN_GetRxFifoFillLevel(&hfdcan1, FDCAN_RX_FIFO1) > 0) {
+        HAL_FDCAN_GetRxMessage(&hfdcan1, FDCAN_RX_FIFO1, &tmpHdr, tmpData);
+    }
   
     /* Enable FIFO 0 Interrupt (Used by Slave) */
     HAL_FDCAN_ActivateNotification(&hfdcan1, FDCAN_IT_RX_FIFO0_NEW_MESSAGE, 0);
