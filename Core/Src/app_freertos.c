@@ -514,4 +514,25 @@ void FwSimMaster_Task(void *argument) {
         vTaskDelay(pdMS_TO_TICKS(10));
     }
 }
+
+void vApplicationStackOverflowHook(TaskHandle_t xTask, char *pcTaskName)
+{
+    (void)xTask;
+    printf("[FATAL] STACK OVERFLOW in task: %s\r\n", pcTaskName);
+    taskDISABLE_INTERRUPTS();
+
+    for (;;)
+    {
+    }
+}
+
+void vApplicationMallocFailedHook(void)
+{
+    printf("[FATAL] FreeRTOS malloc failed\r\n");
+    taskDISABLE_INTERRUPTS();
+
+    for (;;)
+    {
+    }
+}
 /* USER CODE END Application */
