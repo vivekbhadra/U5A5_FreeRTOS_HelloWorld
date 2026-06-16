@@ -22,6 +22,7 @@
 #include "fdcan_updater.h"
 #include "flash_driver.h"
 #include "queue.h"
+#include "boot_state.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -303,166 +304,269 @@ void StartRedTask(void *argument) {
   }
 }
 
-void FirmwareUpdater_Task(void *argument) {
-  FwCanRxQueueMsg_t rxMsg;
-  UpdaterState_t state = UPDATER_STATE_IDLE;
+void FirmwareUpdater_Task(void *argument)
+{
+    FwCanRxQueueMsg_t rxMsg;
+    UpdaterState_t state = UPDATER_STATE_IDLE;
 
-  /* Session trackers */
-  uint16_t active_update_id = 0;
-  uint32_t total_size = 0;
-  uint32_t expected_segment = 0;
-  uint32_t total_bytes_written = 0;
+    /* Session trackers */
+    uint16_t active_update_id = 0;
+    uint32_t total_size = 0;
+    uint32_t expected_segment = 0;
+    uint32_t total_bytes_written = 0;
 
-  printf("[SLAVE] Production Updater Task Started.\r\n");
+    printf("[SLAVE] Production Updater Task Started.\r\n");
 
-  for (;;) {
-    if (xQueueReceive(CanRxQueue, &rxMsg, portMAX_DELAY) == pdPASS) {
+    for (;;)
+    {
+        if (xQueueReceive(CanRxQueue, &rxMsg, portMAX_DELAY) == pdPASS)
+        {
+            printf("[SLAVE RXQ] Dequeued ID=0x%03lX, state=%d, "
+                   "bytes_written=%lu/%lu\r\n",
+                   (unsigned long)rxMsg.can_id,
+                   (int)state,
+                   (unsigned long)total_bytes_written,
+                   (unsigned long)total_size);
 
-      printf("[SLAVE RXQ] Dequeued ID=0x%03lX, state=%d, "
-             "bytes_written=%lu/%lu\r\n",
-             (unsigned long)rxMsg.can_id, (int)state,
-             (unsigned long)total_bytes_written, (unsigned long)total_size);
+            /* ---- 1. Handle Update Init ---- */
+            if (rxMsg.can_id == CAN_ID_FW_INIT && state == UPDATER_STATE_IDLE)
+            {
+                FirmwareUpdateInit_t *init = (FirmwareUpdateInit_t *)rxMsg.payload;
 
-      /* ---- 1. Handle Update Init ---- */
-      if (rxMsg.can_id == CAN_ID_FW_INIT && state == UPDATER_STATE_IDLE) {
-        FirmwareUpdateInit_t *init = (FirmwareUpdateInit_t *)rxMsg.payload;
+                if (init->recipient_id == 0xAA)
+                {
+                    printf("[SLAVE] Init Recv: UpdateID=%u, Size=%lu bytes\r\n",
+                           init->update_id,
+                           (unsigned long)init->total_size);
 
-        if (init->recipient_id == 0xAA) {
-          printf("[SLAVE] Init Recv: UpdateID=%u, Size=%lu bytes\r\n",
-                 init->update_id, (unsigned long)init->total_size);
+                    if (App_Flash_Erase(ADDR_FLASH_DFU, DFU_PARTITION_SIZE) == HAL_OK)
+                    {
+                        __HAL_CRC_DR_RESET(&hcrc);
 
-          if (App_Flash_Erase(ADDR_FLASH_DFU, DFU_PARTITION_SIZE) == HAL_OK) {
-            __HAL_CRC_DR_RESET(&hcrc);
+                        active_update_id = init->update_id;
+                        total_size = init->total_size;
+                        expected_segment = 0;
+                        total_bytes_written = 0;
+                        state = UPDATER_STATE_RECEIVING;
 
-            active_update_id = init->update_id;
-            total_size = init->total_size;
-            expected_segment = 0;
-            total_bytes_written = 0;
-            state = UPDATER_STATE_RECEIVING;
+                        FirmwareUpdateSegmentRequest_t req = {
+                            .update_id = active_update_id,
+                            .segment_id = 0
+                        };
 
-            FirmwareUpdateSegmentRequest_t req = {.update_id = active_update_id,
-                                                  .segment_id = 0};
-            App_FDCAN_Send_Message(CAN_ID_FW_SEG_REQ, (uint8_t *)&req,
-                                   sizeof(req));
-          } else {
-            FirmwareUpdateEnd_t end = {.update_id = init->update_id,
-                                       .reject_reason =
-                                           REJECT_NOR_FLASH_ERROR_OTHER};
-            App_FDCAN_Send_Message(CAN_ID_FW_END, (uint8_t *)&end, sizeof(end));
-          }
-        }
-      }
+                        App_FDCAN_Send_Message(CAN_ID_FW_SEG_REQ,
+                                               (uint8_t *)&req,
+                                               sizeof(req));
+                    }
+                    else
+                    {
+                        FirmwareUpdateEnd_t end = {
+                            .update_id = init->update_id,
+                            .reject_reason = REJECT_NOR_FLASH_ERROR_OTHER
+                        };
 
-      /* ---- 2. Handle Segment Transmission ---- */
-      else if (rxMsg.can_id == CAN_ID_FW_SEGMENT &&
-               state == UPDATER_STATE_RECEIVING) {
-        FirmwareUpdateSegment_t *seg = (FirmwareUpdateSegment_t *)rxMsg.payload;
-
-        if (seg->update_id != active_update_id ||
-            seg->segment_id != expected_segment) {
-          printf("[SLAVE] ERROR: Protocol violation! Expected seg %lu, got "
-                 "%lu\r\n",
-                 (unsigned long)expected_segment,
-                 (unsigned long)seg->segment_id);
-          state = UPDATER_STATE_IDLE;
-          FirmwareUpdateEnd_t end = {.update_id = active_update_id,
-                                     .reject_reason = REJECT_PROTOCOL_ERROR};
-          App_FDCAN_Send_Message(CAN_ID_FW_END, (uint8_t *)&end, sizeof(end));
-          continue;
-        }
-
-        uint8_t write_block[32] = {0};
-        memcpy(write_block, seg->segment_data, seg->data_length);
-
-        uint32_t offset = seg->segment_id * 32;
-        if (App_Flash_Write(ADDR_FLASH_DFU + offset, write_block, 32) ==
-            HAL_OK) {
-
-          /* FIXED: Length is 8 Words (32 bytes / 4) because InputDataFormat is
-           * WORDS */
-          HAL_CRC_Accumulate(&hcrc, (uint32_t *)write_block, 8);
-
-          expected_segment++;
-          total_bytes_written += seg->data_length;
-
-          if (total_bytes_written == total_size) {
-            FirmwareUpdateChecksumRequest_t chk_req = {.update_id =
-                                                           active_update_id};
-            App_FDCAN_Send_Message(CAN_ID_FW_CHKSUM_REQ, (uint8_t *)&chk_req,
-                                   sizeof(chk_req));
-          } else {
-            FirmwareUpdateSegmentRequest_t req = {
-                .update_id = active_update_id, .segment_id = expected_segment};
-            App_FDCAN_Send_Message(CAN_ID_FW_SEG_REQ, (uint8_t *)&req,
-                                   sizeof(req));
-          }
-        } else {
-          state = UPDATER_STATE_IDLE;
-          FirmwareUpdateEnd_t end = {.update_id = active_update_id,
-                                     .reject_reason =
-                                         REJECT_NOR_FLASH_ERROR_OTHER};
-          App_FDCAN_Send_Message(CAN_ID_FW_END, (uint8_t *)&end, sizeof(end));
-        }
-      }
-
-      /* ---- 3. Handle Checksum Validation ---- */
-      else if (rxMsg.can_id == CAN_ID_FW_CHECKSUM &&
-               state == UPDATER_STATE_RECEIVING) {
-        FirmwareUpdateChecksum_t *checksum =
-            (FirmwareUpdateChecksum_t *)rxMsg.payload;
-        if (total_bytes_written != total_size || total_bytes_written == 0) {
-          printf("[SLAVE] ERROR: Checksum before all segments received "
-                 "(%lu of %lu bytes).\r\n",
-                 (unsigned long)total_bytes_written, (unsigned long)total_size);
-          state = UPDATER_STATE_IDLE;
-          FirmwareUpdateEnd_t end = {.update_id = active_update_id,
-                                     .reject_reason = REJECT_PROTOCOL_ERROR};
-          App_FDCAN_Send_Message(CAN_ID_FW_END, (uint8_t *)&end, sizeof(end));
-          continue;
-        }
-        state = UPDATER_STATE_IDLE;
-
-        if (checksum->update_id == active_update_id) {
-
-          /* FIXED 1: Read the accumulated CRC from the Data Register (DR)
-           * first, then reset */
-          uint32_t computed_crc = hcrc.Instance->DR;
-          __HAL_CRC_DR_RESET(&hcrc);
-
-          if (computed_crc == checksum->crc) {
-            printf("[SLAVE] SUCCESS! CRCs MATCH (0x%08lX).\r\n",
-                   (unsigned long)computed_crc);
-
-            FirmwareUpdateEnd_t end = {.update_id = active_update_id,
-                                       .reject_reason = REJECT_SUCCEEDED};
-            App_FDCAN_Send_Message(CAN_ID_FW_END, (uint8_t *)&end, sizeof(end));
-
-            vTaskDelay(pdMS_TO_TICKS(100));
-
-            printf("[SLAVE] Setting MAGIC_SWAP at 0x%08lX and rebooting...\r\n",
-                   (unsigned long)ADDR_BOOT_STATE);
-            if (App_Flash_Erase(ADDR_BOOT_STATE, FLASH_PAGE_SIZE) == HAL_OK) {
-              if (App_Flash_Write(ADDR_BOOT_STATE, MAGIC_SWAP, 16) == HAL_OK) {
-#if ENABLE_REBOOT_AFTER_UPDATE
-    printf("[SLAVE] System reboot initiated...\r\n");
-    NVIC_SystemReset();
-#else
-    printf("[SLAVE] Reboot skipped for debug. MAGIC_SWAP was written.\r\n");
-#endif
-              }
+                        App_FDCAN_Send_Message(CAN_ID_FW_END,
+                                               (uint8_t *)&end,
+                                               sizeof(end));
+                    }
+                }
             }
-          } else {
-            printf("[SLAVE] ERROR: CRC MISMATCH! Computed: 0x%08lX, Expected: "
-                   "0x%08lX\r\n",
-                   (unsigned long)computed_crc, (unsigned long)checksum->crc);
-            FirmwareUpdateEnd_t end = {.update_id = active_update_id,
-                                       .reject_reason = REJECT_CRC_ERROR};
-            App_FDCAN_Send_Message(CAN_ID_FW_END, (uint8_t *)&end, sizeof(end));
-          }
+
+            /* ---- 2. Handle Segment Transmission ---- */
+            else if (rxMsg.can_id == CAN_ID_FW_SEGMENT &&
+                     state == UPDATER_STATE_RECEIVING)
+            {
+                FirmwareUpdateSegment_t *seg =
+                    (FirmwareUpdateSegment_t *)rxMsg.payload;
+
+                if (seg->update_id != active_update_id ||
+                    seg->segment_id != expected_segment)
+                {
+                    printf("[SLAVE] ERROR: Protocol violation! Expected seg %lu, got %lu\r\n",
+                           (unsigned long)expected_segment,
+                           (unsigned long)seg->segment_id);
+
+                    state = UPDATER_STATE_IDLE;
+
+                    FirmwareUpdateEnd_t end = {
+                        .update_id = active_update_id,
+                        .reject_reason = REJECT_PROTOCOL_ERROR
+                    };
+
+                    App_FDCAN_Send_Message(CAN_ID_FW_END,
+                                           (uint8_t *)&end,
+                                           sizeof(end));
+
+                    continue;
+                }
+
+                uint8_t write_block[32] = {0};
+                memcpy(write_block, seg->segment_data, seg->data_length);
+
+                uint32_t offset = seg->segment_id * 32U;
+
+                if (App_Flash_Write(ADDR_FLASH_DFU + offset,
+                                    write_block,
+                                    32U) == HAL_OK)
+                {
+                    /*
+                     * Length is 8 words because CRC input format is configured
+                     * for 32-bit words: 32 bytes / 4 = 8 words.
+                     */
+                    HAL_CRC_Accumulate(&hcrc, (uint32_t *)write_block, 8);
+
+                    expected_segment++;
+                    total_bytes_written += seg->data_length;
+
+                    if (total_bytes_written == total_size)
+                    {
+                        FirmwareUpdateChecksumRequest_t chk_req = {
+                            .update_id = active_update_id
+                        };
+
+                        App_FDCAN_Send_Message(CAN_ID_FW_CHKSUM_REQ,
+                                               (uint8_t *)&chk_req,
+                                               sizeof(chk_req));
+                    }
+                    else
+                    {
+                        FirmwareUpdateSegmentRequest_t req = {
+                            .update_id = active_update_id,
+                            .segment_id = expected_segment
+                        };
+
+                        App_FDCAN_Send_Message(CAN_ID_FW_SEG_REQ,
+                                               (uint8_t *)&req,
+                                               sizeof(req));
+                    }
+                }
+                else
+                {
+                    state = UPDATER_STATE_IDLE;
+
+                    FirmwareUpdateEnd_t end = {
+                        .update_id = active_update_id,
+                        .reject_reason = REJECT_NOR_FLASH_ERROR_OTHER
+                    };
+
+                    App_FDCAN_Send_Message(CAN_ID_FW_END,
+                                           (uint8_t *)&end,
+                                           sizeof(end));
+                }
+            }
+
+            /* ---- 3. Handle Checksum Validation ---- */
+            else if (rxMsg.can_id == CAN_ID_FW_CHECKSUM &&
+                     state == UPDATER_STATE_RECEIVING)
+            {
+                FirmwareUpdateChecksum_t *checksum =
+                    (FirmwareUpdateChecksum_t *)rxMsg.payload;
+
+                if (total_bytes_written != total_size || total_bytes_written == 0U)
+                {
+                    printf("[SLAVE] ERROR: Checksum before all segments received "
+                           "(%lu of %lu bytes).\r\n",
+                           (unsigned long)total_bytes_written,
+                           (unsigned long)total_size);
+
+                    state = UPDATER_STATE_IDLE;
+
+                    FirmwareUpdateEnd_t end = {
+                        .update_id = active_update_id,
+                        .reject_reason = REJECT_PROTOCOL_ERROR
+                    };
+
+                    App_FDCAN_Send_Message(CAN_ID_FW_END,
+                                           (uint8_t *)&end,
+                                           sizeof(end));
+
+                    continue;
+                }
+
+                state = UPDATER_STATE_IDLE;
+
+                if (checksum->update_id == active_update_id)
+                {
+                    /*
+                     * Read the accumulated CRC from the Data Register first,
+                     * then reset the CRC peripheral.
+                     */
+                    uint32_t computed_crc = hcrc.Instance->DR;
+                    __HAL_CRC_DR_RESET(&hcrc);
+
+                    if (computed_crc == checksum->crc)
+                    {
+                        printf("[SLAVE] SUCCESS! CRCs MATCH (0x%08lX).\r\n",
+                               (unsigned long)computed_crc);
+
+                        BootStateRecord_t pending_record =
+                            BootState_MakeUpdatePendingRecord((uint32_t)active_update_id,
+                                                              total_size,
+                                                              checksum->crc);
+                        BootState_WriteRecord(&pending_record);
+                        
+                        if (BootState_WriteRecord(&pending_record))
+                        {
+                            printf("[BOOT_STATE] UPDATE_PENDING written: "
+                                   "version=%lu, size=%lu, crc=0x%08lX\r\n",
+                                   (unsigned long)pending_record.pending_version,
+                                   (unsigned long)pending_record.pending_size,
+                                   (unsigned long)pending_record.pending_crc);
+
+                            FirmwareUpdateEnd_t end = {
+                                .update_id = active_update_id,
+                                .reject_reason = REJECT_SUCCEEDED
+                            };
+
+                            App_FDCAN_Send_Message(CAN_ID_FW_END,
+                                                   (uint8_t *)&end,
+                                                   sizeof(end));
+
+                            vTaskDelay(pdMS_TO_TICKS(100));
+
+#if ENABLE_REBOOT_AFTER_UPDATE
+                            printf("[SLAVE] System reboot initiated...\r\n");
+                            NVIC_SystemReset();
+#else
+                            printf("[SLAVE] Reboot skipped for debug. "
+                                   "UPDATE_PENDING was written.\r\n");
+#endif
+                        }
+                        else
+                        {
+                            printf("[BOOT_STATE] ERROR: Failed to write "
+                                   "UPDATE_PENDING record\r\n");
+
+                            FirmwareUpdateEnd_t end = {
+                                .update_id = active_update_id,
+                                .reject_reason = REJECT_NOR_FLASH_ERROR_OTHER
+                            };
+
+                            App_FDCAN_Send_Message(CAN_ID_FW_END,
+                                                   (uint8_t *)&end,
+                                                   sizeof(end));
+                        }
+                    }
+                    else
+                    {
+                        printf("[SLAVE] ERROR: CRC MISMATCH! Computed: "
+                               "0x%08lX, Expected: 0x%08lX\r\n",
+                               (unsigned long)computed_crc,
+                               (unsigned long)checksum->crc);
+
+                        FirmwareUpdateEnd_t end = {
+                            .update_id = active_update_id,
+                            .reject_reason = REJECT_CRC_ERROR
+                        };
+
+                        App_FDCAN_Send_Message(CAN_ID_FW_END,
+                                               (uint8_t *)&end,
+                                               sizeof(end));
+                    }
+                }
+            }
         }
-      }
     }
-  }
 }
 
 /* Append to Core/Src/app_freertos.c */
