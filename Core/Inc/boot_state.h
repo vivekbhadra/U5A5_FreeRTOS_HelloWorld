@@ -49,8 +49,7 @@ typedef struct
     uint32_t boot_attempt_count;
 } BootStateRecord_t;
 
-_Static_assert((sizeof(BootStateRecord_t) % 16U) == 0U,
-               "BootStateRecord_t must remain 16-byte aligned in size");
+_Static_assert((sizeof(BootStateRecord_t) % 16U) == 0U, "BootStateRecord_t must remain 16-byte aligned in size");
 
 const BootStateRecord_t *BootState_GetRecord(void);
 
