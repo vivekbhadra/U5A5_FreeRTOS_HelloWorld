@@ -71,4 +71,5 @@ int BootState_IsAddressInSram(uint32_t address);
 int BootState_IsAddressInFlash(uint32_t address);
 
 int BootState_IsValidImageVectorTable(uint32_t image_addr);
+int BootState_WriteRecord(const BootStateRecord_t *record);
 #endif /* BOOT_STATE_H */
