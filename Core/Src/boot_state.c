@@ -134,3 +134,30 @@ int BootState_IsValidImageVectorTable(uint32_t image_addr)
 
     return 1;
 }
+
+int BootState_WriteRecord(const BootStateRecord_t *record)
+{
+    if (record == 0)
+    {
+        return 0;
+    }
+
+    if (!BootState_IsValidRecord(record))
+    {
+        return 0;
+    }
+
+    if (App_Flash_Erase(BOOT_STATE_ADDR, SIZE_BOOT_STATE) != HAL_OK)
+    {
+        return 0;
+    }
+
+    if (App_Flash_Write(BOOT_STATE_ADDR,
+                        (const uint8_t *)record,
+                        sizeof(BootStateRecord_t)) != HAL_OK)
+    {
+        return 0;
+    }
+
+    return 1;
+}
