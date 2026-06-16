@@ -1,4 +1,5 @@
 #include "boot_state.h"
+#include "flash_driver.h"
 
 const BootStateRecord_t *BootState_GetRecord(void)
 {
